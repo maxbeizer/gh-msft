@@ -26,12 +26,14 @@ func newMailListCmd(factory Factory) *cobra.Command {
 		Short: "List recent inbox messages",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			providers, cleanup, err := build(cmd, factory)
+			providers, cleanup, sp, err := build(cmd, factory)
 			if err != nil {
 				return err
 			}
 			defer cleanup()
+			sp.setMessage("Loading inbox…")
 			msgs, err := providers.Mail.ListInbox(cmd.Context(), top)
+			sp.stopSpinner()
 			if err != nil {
 				return fmt.Errorf("listing inbox: %w", err)
 			}
@@ -64,15 +66,20 @@ func newMailArchiveCmd(factory Factory) *cobra.Command {
 			if len(ids) == 0 {
 				return fmt.Errorf("no message ids provided (pass ids as args or use --stdin)")
 			}
-			providers, cleanup, err := build(cmd, factory)
+			providers, cleanup, sp, err := build(cmd, factory)
 			if err != nil {
 				return err
 			}
 			defer cleanup()
+			sp.setMessage("Archiving…")
 			for _, id := range ids {
 				if err := providers.Mail.Archive(cmd.Context(), id); err != nil {
+					sp.stopSpinner()
 					return fmt.Errorf("archiving %s: %w", id, err)
 				}
+			}
+			sp.stopSpinner()
+			for _, id := range ids {
 				fmt.Fprintf(cmd.OutOrStdout(), "archived %s\n", id)
 			}
 			return nil

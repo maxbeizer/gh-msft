@@ -12,11 +12,12 @@ func newTUICmd(factory Factory) *cobra.Command {
 		Short: "Launch the interactive inbox",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			providers, cleanup, err := build(cmd, factory)
+			providers, cleanup, sp, err := build(cmd, factory)
 			if err != nil {
 				return err
 			}
 			defer cleanup()
+			sp.stopSpinner()
 			return tui.Run(providers.Mail, top)
 		},
 	}
