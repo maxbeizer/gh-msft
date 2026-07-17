@@ -42,7 +42,7 @@ func (f *fakeGraph) DoAction(ctx context.Context, actionURL string, body any) (j
 const sampleInbox = `{
   "value": [
     {"id":"AAA1","subject":"Nifty Stand Up","isRead":false,"receivedDateTime":"2026-07-17T21:36:12Z",
-     "from":{"emailAddress":{"name":"Max Beizer","address":"maxbeizer@github.com"}}},
+     "from":{"emailAddress":{"name":"Ada Lovelace","address":"ada@example.com"}}},
     {"id":"AAA2","subject":"Accepted: Meeting","isRead":true,"receivedDateTime":"2026-07-17T21:42:23Z",
      "from":{"emailAddress":{"name":"Jonathan Otalora","address":"stephenotalora@github.com"}}}
   ]
@@ -62,7 +62,7 @@ func TestListInboxParsesMessages(t *testing.T) {
 	if msgs[0].ID != "AAA1" || msgs[0].Subject != "Nifty Stand Up" {
 		t.Errorf("msg0 = %+v", msgs[0])
 	}
-	if msgs[0].From.Name != "Max Beizer" || msgs[0].From.Email != "maxbeizer@github.com" {
+	if msgs[0].From.Name != "Ada Lovelace" || msgs[0].From.Email != "ada@example.com" {
 		t.Errorf("msg0 from = %+v", msgs[0].From)
 	}
 	if msgs[0].IsRead {
