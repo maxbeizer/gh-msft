@@ -16,3 +16,12 @@ and this project adheres to [Semantic Versioning](https://semver.org).
 - Commands: `gh msft mail list [--top N] [--json]`, `gh msft mail archive <id...> [--stdin]`,
   `gh msft cal [--top N] [--json]`.
 - Interactive inbox TUI (`gh msft tui`) built on Bubble Tea (navigate, archive, refresh).
+
+### Fixed
+
+- Read WorkIQ tool results from `structuredContent` (where WorkIQ actually returns
+  `fetch`/`do_action` payloads) in addition to `content[].text`. Previously every live
+  call failed with `decode fetch envelope: unexpected end of JSON input`.
+- Bound the WorkIQ startup handshake with a timeout (default 60s, override via
+  `WORKIQ_STARTUP_TIMEOUT`) so a cold `npx` launch fails fast with a clear message
+  instead of hanging indefinitely.

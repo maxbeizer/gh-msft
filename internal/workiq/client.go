@@ -18,6 +18,7 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
+	"time"
 )
 
 // FetchResult is one entry from the WorkIQ "fetch" tool response envelope. Each
@@ -72,11 +73,35 @@ func New(ctx context.Context) (*Client, error) {
 	}
 
 	c := &Client{proc: cmd, t: newStdioTransport(stdin, stdout)}
-	if err := c.handshake(ctx); err != nil {
+
+	// A cold "npx -y @latest" launch (registry resolution) plus WorkIQ's remote
+	// tool registration and SSO broker can occasionally stall. Bound the handshake
+	// so we fail fast with a clear message instead of hanging forever.
+	hctx := ctx
+	if _, ok := ctx.Deadline(); !ok {
+		var cancel context.CancelFunc
+		hctx, cancel = context.WithTimeout(ctx, startupTimeout(os.Getenv))
+		defer cancel()
+	}
+	if err := c.handshake(hctx); err != nil {
 		_ = c.Close()
+		if errors.Is(err, context.DeadlineExceeded) {
+			return nil, fmt.Errorf("workiq: timed out starting %q; is WorkIQ installed and are you signed in? (set WORKIQ_STARTUP_TIMEOUT to adjust): %w", name, err)
+		}
 		return nil, err
 	}
 	return c, nil
+}
+
+// startupTimeout returns the handshake timeout, overridable via
+// WORKIQ_STARTUP_TIMEOUT (Go duration, e.g. "90s"). Defaults to 60s.
+func startupTimeout(env func(string) string) time.Duration {
+	if raw := strings.TrimSpace(env("WORKIQ_STARTUP_TIMEOUT")); raw != "" {
+		if d, err := time.ParseDuration(raw); err == nil && d > 0 {
+			return d
+		}
+	}
+	return 60 * time.Second
 }
 
 // newWithPipes builds a client over caller-provided pipes and runs the handshake.
@@ -116,24 +141,30 @@ func (c *Client) Close() error {
 	return nil
 }
 
-// toolResult mirrors the MCP tools/call result shape.
+// toolResult mirrors the MCP tools/call result shape. WorkIQ returns tool
+// payloads in structuredContent (a JSON object), leaving the text content array
+// empty; older/other servers put a JSON string in content[].text. callTool
+// handles both.
 type toolResult struct {
 	Content []struct {
 		Type string `json:"type"`
 		Text string `json:"text"`
 	} `json:"content"`
-	IsError bool `json:"isError"`
+	StructuredContent json.RawMessage `json:"structuredContent"`
+	IsError           bool            `json:"isError"`
 }
 
-// callTool invokes an MCP tool and returns the concatenated text payload.
-func (c *Client) callTool(ctx context.Context, name string, args any) (string, error) {
+// callTool invokes an MCP tool and returns its JSON payload as bytes. It prefers
+// the concatenated text content, falling back to structuredContent (which is how
+// WorkIQ actually returns fetch/do_action results).
+func (c *Client) callTool(ctx context.Context, name string, args any) ([]byte, error) {
 	raw, err := c.t.call(ctx, "tools/call", map[string]any{"name": name, "arguments": args})
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	var res toolResult
 	if err := json.Unmarshal(raw, &res); err != nil {
-		return "", fmt.Errorf("workiq: decode tool result: %w", err)
+		return nil, fmt.Errorf("workiq: decode tool result: %w", err)
 	}
 	var sb strings.Builder
 	for _, part := range res.Content {
@@ -141,11 +172,14 @@ func (c *Client) callTool(ctx context.Context, name string, args any) (string, e
 			sb.WriteString(part.Text)
 		}
 	}
-	text := sb.String()
-	if res.IsError {
-		return "", fmt.Errorf("workiq: tool %q reported error: %s", name, strings.TrimSpace(text))
+	payload := []byte(strings.TrimSpace(sb.String()))
+	if len(payload) == 0 && len(res.StructuredContent) > 0 {
+		payload = res.StructuredContent
 	}
-	return text, nil
+	if res.IsError {
+		return nil, fmt.Errorf("workiq: tool %q reported error: %s", name, strings.TrimSpace(string(payload)))
+	}
+	return payload, nil
 }
 
 // fetchEnvelope is the JSON payload returned by the WorkIQ "fetch" tool.
@@ -166,7 +200,7 @@ func (c *Client) Fetch(ctx context.Context, entityURLs ...string) ([]FetchResult
 		return nil, err
 	}
 	var env fetchEnvelope
-	if err := json.Unmarshal([]byte(text), &env); err != nil {
+	if err := json.Unmarshal(text, &env); err != nil {
 		return nil, fmt.Errorf("workiq: decode fetch envelope: %w", err)
 	}
 	for i, r := range env.Results {

@@ -126,6 +126,54 @@ func textResult(s string) toolResult {
 	}{{Type: "text", Text: s}}}
 }
 
+// structResult mimics how WorkIQ actually replies: empty content array, payload
+// in structuredContent.
+func structResult(jsonPayload string) toolResult {
+	return toolResult{StructuredContent: json.RawMessage(jsonPayload)}
+}
+
+func TestFetchStructuredContent(t *testing.T) {
+	handle := func(name string, args json.RawMessage) (toolResult, *rpcError) {
+		env := `{"results":[{"data":{"value":[{"subject":"hi"}]},"statusCode":200}],"note":"ok"}`
+		return structResult(env), nil
+	}
+	w, r := startFakeServer(t, handle)
+	ctx := context.Background()
+	c, err := newWithPipes(ctx, w, r)
+	if err != nil {
+		t.Fatalf("newWithPipes: %v", err)
+	}
+	results, err := c.Fetch(ctx, "/me/messages")
+	if err != nil {
+		t.Fatalf("Fetch: %v", err)
+	}
+	if len(results) != 1 || results[0].StatusCode != 200 {
+		t.Fatalf("unexpected results: %+v", results)
+	}
+	if !strings.Contains(string(results[0].Data), "hi") {
+		t.Errorf("data = %s", results[0].Data)
+	}
+}
+
+func TestDoActionStructuredContent(t *testing.T) {
+	handle := func(name string, args json.RawMessage) (toolResult, *rpcError) {
+		return structResult(`{"ok":true}`), nil
+	}
+	w, r := startFakeServer(t, handle)
+	ctx := context.Background()
+	c, err := newWithPipes(ctx, w, r)
+	if err != nil {
+		t.Fatalf("newWithPipes: %v", err)
+	}
+	raw, err := c.DoAction(ctx, "/me/messages/abc/move", nil)
+	if err != nil {
+		t.Fatalf("DoAction: %v", err)
+	}
+	if !strings.Contains(string(raw), "ok") {
+		t.Errorf("unexpected result: %s", raw)
+	}
+}
+
 func TestFetchSuccess(t *testing.T) {
 	var gotName string
 	var gotArgs json.RawMessage
