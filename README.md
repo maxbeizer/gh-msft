@@ -1,5 +1,8 @@
 # gh-msft
 
+> [!WARNING]
+> Currently a spike. Not sure if this will be worth it. API subject to change
+
 A [GitHub CLI](https://cli.github.com/) extension to read and triage your
 Microsoft 365 **mail and calendar** from the terminal.
 
