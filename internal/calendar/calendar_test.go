@@ -38,7 +38,7 @@ const sampleEvents = `{
     {"id":"E1","subject":"Nifty Stand Up",
      "start":{"dateTime":"2026-07-20T16:30:00.0000000","timeZone":"UTC"},
      "end":{"dateTime":"2026-07-20T17:00:00.0000000","timeZone":"UTC"},
-     "organizer":{"emailAddress":{"name":"Max Beizer","address":"maxbeizer@github.com"}}},
+     "organizer":{"emailAddress":{"name":"Ada Lovelace","address":"ada@example.com"}}},
     {"id":"E2","subject":"Max:Meni 1:1",
      "start":{"dateTime":"2026-07-28T17:30:00.0000000","timeZone":"UTC"},
      "end":{"dateTime":"2026-07-28T18:00:00.0000000","timeZone":"UTC"},
@@ -65,7 +65,7 @@ func TestUpcomingParsesCalendarView(t *testing.T) {
 	if events[0].ID != "E1" || events[0].Subject != "Nifty Stand Up" {
 		t.Errorf("event0 = %+v", events[0])
 	}
-	if events[0].Organizer != "Max Beizer" {
+	if events[0].Organizer != "Ada Lovelace" {
 		t.Errorf("organizer = %q", events[0].Organizer)
 	}
 	if events[0].Start.IsZero() || events[0].End.IsZero() {
