@@ -8,6 +8,10 @@
 *.so
 *.dylib
 
+# Built extension binaries
+/bin/
+/gh-msft
+
 # Test binary, built with `go test -c`
 *.test
 

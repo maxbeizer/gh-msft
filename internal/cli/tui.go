@@ -1,0 +1,25 @@
+package cli
+
+import (
+	"github.com/maxbeizer/gh-msft/internal/tui"
+	"github.com/spf13/cobra"
+)
+
+func newTUICmd(factory Factory) *cobra.Command {
+	var top int
+	cmd := &cobra.Command{
+		Use:   "tui",
+		Short: "Launch the interactive inbox",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			providers, cleanup, err := build(cmd, factory)
+			if err != nil {
+				return err
+			}
+			defer cleanup()
+			return tui.Run(providers.Mail, top)
+		},
+	}
+	cmd.Flags().IntVar(&top, "top", 50, "maximum number of messages to load")
+	return cmd
+}
