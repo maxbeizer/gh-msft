@@ -40,7 +40,7 @@ func newCalCmd(factory Factory) *cobra.Command {
 // stderr isn't a terminal); callers should update its message for subsequent slow
 // steps and call stopSpinner before writing output.
 func build(cmd *cobra.Command, factory Factory) (*Providers, func(), *spinner, error) {
-	sp := newSpinner(cmd.ErrOrStderr(), "Starting WorkIQ (first launch can take a few seconds)…")
+	sp := newSpinner(cmd.ErrOrStderr(), "Starting WorkIQ (this can take a few seconds)…")
 	if factory == nil {
 		return nil, func() {}, sp, fmt.Errorf("no provider factory configured")
 	}
