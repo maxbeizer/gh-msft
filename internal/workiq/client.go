@@ -58,7 +58,12 @@ func commandFor(env func(string) string) (string, []string) {
 func New(ctx context.Context) (*Client, error) {
 	name, args := commandFor(os.Getenv)
 	cmd := exec.CommandContext(ctx, name, args...)
-	cmd.Stderr = io.Discard
+	// Send the child's stderr to the null device directly (not io.Discard): an
+	// io.Writer stderr makes os/exec spawn a copy goroutine that Wait() blocks on
+	// until every process holding the pipe exits. WorkIQ's grandchildren (node,
+	// the native workiq binary) keep it open, which would hang Close forever.
+	cmd.Stderr = nil
+	setPgid(cmd) // put the child in its own group so Close can kill grandchildren
 
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -129,15 +134,23 @@ func (c *Client) handshake(ctx context.Context) error {
 	return nil
 }
 
-// Close terminates the underlying WorkIQ process, if any.
+// Close terminates the underlying WorkIQ process group, if any. It kills the whole
+// group (npx -> node -> native workiq) so no orphaned WorkIQ processes linger, and
+// bounds the wait so Close never blocks the caller's exit.
 func (c *Client) Close() error {
-	if c.proc == nil {
+	if c.proc == nil || c.proc.Process == nil {
 		return nil
 	}
-	if c.proc.Process != nil {
-		_ = c.proc.Process.Kill()
+	terminate(c.proc)
+	done := make(chan struct{})
+	go func() {
+		_ = c.proc.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
 	}
-	_ = c.proc.Wait()
 	return nil
 }
 

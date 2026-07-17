@@ -25,3 +25,8 @@ and this project adheres to [Semantic Versioning](https://semver.org).
 - Bound the WorkIQ startup handshake with a timeout (default 60s, override via
   `WORKIQ_STARTUP_TIMEOUT`) so a cold `npx` launch fails fast with a clear message
   instead of hanging indefinitely.
+- Send WorkIQ's stderr to the null device instead of `io.Discard`, and kill the
+  WorkIQ **process group** on close. Previously `Close` hung after every command
+  (the caller had to Ctrl-C) because `Wait` blocked on a stderr copy goroutine that
+  WorkIQ's grandchildren kept open; orphaned WorkIQ processes (and their popup
+  windows) also lingered. Close now terminates the whole tree and never blocks.
