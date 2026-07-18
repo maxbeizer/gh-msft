@@ -42,17 +42,22 @@ gh msft mail list --json | jq -r '.[].id' | gh msft mail archive --stdin
 gh msft cal                       # upcoming calendar events
 gh msft cal --json                # machine-readable output
 gh msft tui                       # interactive inbox
+gh msft tui --cal                 # start in calendar mode
 ```
 
 ### Interactive inbox (`gh msft tui`)
+
+The TUI has two modes: mail (inbox) and calendar (upcoming events). Press
+`tab` to switch, or start in calendar mode with `--cal`.
 
 | Key        | Action                          |
 | ---------- | ------------------------------- |
 | `j` / `k`  | move down / up (also arrows)    |
 | `g` / `G`  | jump to top / bottom            |
-| `a`        | archive selected message        |
+| `tab`      | switch mail / calendar          |
+| `a`        | archive selected message (mail) |
 | `r`        | toggle read state (visual only) |
-| `R`        | refresh inbox                   |
+| `R`        | refresh current view            |
 | `?`        | toggle help                     |
 | `q`        | quit                            |
 

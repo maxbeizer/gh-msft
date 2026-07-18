@@ -1,29 +1,46 @@
-// Package tui provides an interactive terminal inbox for gh-msft built on
-// Bubble Tea. It consumes the mail.Provider interface so it is decoupled from
-// WorkIQ and unit-testable with a fake provider.
+// Package tui provides an interactive terminal inbox and calendar for gh-msft
+// built on Bubble Tea. It consumes the mail.Provider and calendar.Provider
+// interfaces so it is decoupled from WorkIQ and unit-testable with fakes.
 package tui
 
 import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/maxbeizer/gh-msft/internal/calendar"
 	"github.com/maxbeizer/gh-msft/internal/mail"
 )
 
 // Message types exchanged with the Bubble Tea runtime.
 type messagesLoadedMsg struct{ messages []mail.Message }
+type eventsLoadedMsg struct{ events []calendar.Event }
 type archivedMsg struct{ id string }
 type errMsg struct{ err error }
 
-// Model is the inbox TUI state.
+// mode selects which view the TUI shows.
+type mode int
+
+const (
+	mailMode     mode = iota // inbox list (default)
+	calendarMode             // upcoming calendar events
+)
+
+// Model is the inbox/calendar TUI state.
 type Model struct {
 	provider mail.Provider
+	cal      calendar.Provider
 	top      int
+	mode     mode
 
-	messages []mail.Message
+	messages   []mail.Message
+	mailLoaded bool
+	events     []calendar.Event
+	calLoaded  bool
+
 	cursor   int
 	loading  bool
 	err      error
@@ -35,7 +52,8 @@ type Model struct {
 	height int
 }
 
-// New builds an inbox model for the given provider.
+// New builds a model for the given mail provider. Set the calendar provider via
+// the returned model's cal field (Run does this) before entering calendar mode.
 func New(provider mail.Provider, top int) Model {
 	if top <= 0 {
 		top = 50
@@ -43,8 +61,11 @@ func New(provider mail.Provider, top int) Model {
 	return Model{provider: provider, top: top, loading: true}
 }
 
-// Init kicks off the initial inbox load.
+// Init kicks off the initial load for the starting mode.
 func (m Model) Init() tea.Cmd {
+	if m.mode == calendarMode {
+		return m.loadEventsCmd()
+	}
 	return m.loadCmd()
 }
 
@@ -56,6 +77,20 @@ func (m Model) loadCmd() tea.Cmd {
 			return errMsg{err}
 		}
 		return messagesLoadedMsg{msgs}
+	}
+}
+
+func (m Model) loadEventsCmd() tea.Cmd {
+	cal, top := m.cal, m.top
+	return func() tea.Msg {
+		if cal == nil {
+			return eventsLoadedMsg{nil}
+		}
+		evs, err := cal.Upcoming(context.Background(), top)
+		if err != nil {
+			return errMsg{err}
+		}
+		return eventsLoadedMsg{evs}
 	}
 }
 
@@ -85,6 +120,15 @@ func (m Model) update(msg tea.Msg) (Model, tea.Cmd) {
 
 	case messagesLoadedMsg:
 		m.messages = msg.messages
+		m.mailLoaded = true
+		m.loading = false
+		m.err = nil
+		m.clampCursor()
+		return m, nil
+
+	case eventsLoadedMsg:
+		m.events = msg.events
+		m.calLoaded = true
 		m.loading = false
 		m.err = nil
 		m.clampCursor()
@@ -114,6 +158,14 @@ func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 	case "?":
 		m.showHelp = !m.showHelp
 		return m, nil
+	case "tab":
+		m.toggleMode()
+		m.cursor = 0
+		if cmd := m.loadForModeCmd(); cmd != nil {
+			m.loading = true
+			return m, cmd
+		}
+		return m, nil
 	case "j", "down":
 		m.moveCursor(1)
 		return m, nil
@@ -124,7 +176,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 		m.cursor = 0
 		return m, nil
 	case "G", "end":
-		m.cursor = len(m.messages) - 1
+		m.cursor = m.itemCount() - 1
 		m.clampCursor()
 		return m, nil
 	case "r":
@@ -143,9 +195,24 @@ func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 	case "R":
 		m.loading = true
 		m.status = "refreshing…"
+		if m.mode == calendarMode {
+			return m, m.loadEventsCmd()
+		}
 		return m, m.loadCmd()
 	}
 	return m, nil
+}
+
+// loadForModeCmd returns a load command when the current mode's data has not been
+// fetched yet, or nil when it is already loaded.
+func (m Model) loadForModeCmd() tea.Cmd {
+	if m.mode == calendarMode && !m.calLoaded {
+		return m.loadEventsCmd()
+	}
+	if m.mode == mailMode && !m.mailLoaded {
+		return m.loadCmd()
+	}
+	return nil
 }
 
 func (m *Model) moveCursor(delta int) {
@@ -153,20 +220,40 @@ func (m *Model) moveCursor(delta int) {
 	m.clampCursor()
 }
 
+func (m *Model) toggleMode() {
+	if m.mode == mailMode {
+		m.mode = calendarMode
+	} else {
+		m.mode = mailMode
+	}
+}
+
+// itemCount returns the number of rows in the active view.
+func (m *Model) itemCount() int {
+	if m.mode == calendarMode {
+		return len(m.events)
+	}
+	return len(m.messages)
+}
+
 func (m *Model) clampCursor() {
 	if m.cursor < 0 {
 		m.cursor = 0
 	}
-	if m.cursor >= len(m.messages) {
-		m.cursor = len(m.messages) - 1
+	if m.cursor >= m.itemCount() {
+		m.cursor = m.itemCount() - 1
 	}
 	if m.cursor < 0 {
 		m.cursor = 0
 	}
 }
 
-// selected returns the highlighted message or nil when the inbox is empty.
+// selected returns the highlighted mail message, or nil when not in mail mode or
+// the inbox is empty. Calendar mode has no selectable mail actions yet.
 func (m *Model) selected() *mail.Message {
+	if m.mode != mailMode {
+		return nil
+	}
 	if m.cursor < 0 || m.cursor >= len(m.messages) {
 		return nil
 	}
@@ -199,9 +286,19 @@ func (m Model) View() string {
 		return fmt.Sprintf("Error: %v\n\nPress q to quit.\n", m.err)
 	}
 	if m.loading {
+		if m.mode == calendarMode {
+			return "Loading calendar…\n"
+		}
 		return "Loading inbox…\n"
 	}
+	if m.mode == calendarMode {
+		return m.viewCalendar()
+	}
+	return m.viewMail()
+}
 
+// viewMail renders the inbox list.
+func (m Model) viewMail() string {
 	var b strings.Builder
 	b.WriteString(titleStyle.Render(fmt.Sprintf("Inbox (%d)", len(m.messages))))
 	b.WriteString("\n\n")
@@ -233,15 +330,77 @@ func (m Model) View() string {
 		b.WriteString("\n")
 	}
 
+	b.WriteString(m.footer())
+	return b.String()
+}
+
+// viewCalendar renders a simple list of upcoming calendar events. A richer
+// per-day layout will replace it later.
+func (m Model) viewCalendar() string {
+	var b strings.Builder
+	b.WriteString(titleStyle.Render(fmt.Sprintf("Calendar (%d)", len(m.events))))
+	b.WriteString("\n\n")
+
+	if len(m.events) == 0 {
+		b.WriteString("  (no upcoming events)\n")
+	}
+	for i, e := range m.events {
+		cursor := "  "
+		if i == m.cursor {
+			cursor = "> "
+		}
+		line := fmt.Sprintf("%s%-36s %s", cursor, eventWhen(e), truncate(e.Subject, 40))
+		if i == m.cursor {
+			line = selectedStyle.Render(line)
+		}
+		b.WriteString(line)
+		b.WriteString("\n")
+	}
+
+	b.WriteString(m.footer())
+	return b.String()
+}
+
+// eventWhen formats an event's start and end for the calendar list. All-day
+// events show the date followed by "all day". Same-day meetings show the end as
+// a time only; multi-day meetings repeat the end date.
+func eventWhen(e calendar.Event) string {
+	if e.Start.IsZero() {
+		return "-"
+	}
+	if e.IsAllDay {
+		return e.Start.Format("Mon Jan 02") + " all day"
+	}
+	start := e.Start.Local()
+	if e.End.IsZero() {
+		return start.Format("Mon Jan 02 15:04")
+	}
+	end := e.End.Local()
+	if sameDay(start, end) {
+		return start.Format("Mon Jan 02 15:04") + " - " + end.Format("15:04")
+	}
+	return start.Format("Mon Jan 02 15:04") + " - " + end.Format("Mon Jan 02 15:04")
+}
+
+// sameDay reports whether a and b fall on the same calendar day.
+func sameDay(a, b time.Time) bool {
+	ay, am, ad := a.Date()
+	by, bm, bd := b.Date()
+	return ay == by && am == bm && ad == bd
+}
+
+// footer renders the shared status line and key hints for both views.
+func (m Model) footer() string {
+	var b strings.Builder
 	b.WriteString("\n")
 	if m.status != "" {
 		b.WriteString(helpStyle.Render(m.status))
 		b.WriteString("\n")
 	}
 	if m.showHelp {
-		b.WriteString(helpStyle.Render("j/k move · a archive · r toggle read · R refresh · g/G top/bottom · ? help · q quit"))
+		b.WriteString(helpStyle.Render("j/k move · a archive · r toggle read · R refresh · g/G top/bottom · tab mail/calendar · ? help · q quit"))
 	} else {
-		b.WriteString(helpStyle.Render("? help · q quit"))
+		b.WriteString(helpStyle.Render("tab switch · ? help · q quit"))
 	}
 	b.WriteString("\n")
 	return b.String()
@@ -258,9 +417,15 @@ func truncate(s string, n int) string {
 	return s[:n-1] + "…"
 }
 
-// Run starts the interactive inbox program against the given provider.
-func Run(provider mail.Provider, top int) error {
-	p := tea.NewProgram(New(provider, top))
+// Run starts the interactive TUI against the given providers. When startCalendar
+// is true the TUI opens in calendar mode instead of mail mode.
+func Run(mailP mail.Provider, calP calendar.Provider, top int, startCalendar bool) error {
+	m := New(mailP, top)
+	m.cal = calP
+	if startCalendar {
+		m.mode = calendarMode
+	}
+	p := tea.NewProgram(m)
 	_, err := p.Run()
 	return err
 }
