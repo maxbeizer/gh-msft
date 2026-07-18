@@ -50,6 +50,8 @@ gh msft tui                       # interactive inbox
 | ---------- | ------------------------------- |
 | `j` / `k`  | move down / up (also arrows)    |
 | `g` / `G`  | jump to top / bottom            |
+| `enter`    | open selected message           |
+| `esc`      | close open message              |
 | `a`        | archive selected message        |
 | `r`        | toggle read state (visual only) |
 | `R`        | refresh inbox                   |

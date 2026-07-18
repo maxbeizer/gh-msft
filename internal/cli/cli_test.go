@@ -32,6 +32,10 @@ func (f *fakeMail) Archive(ctx context.Context, id string) error {
 	return nil
 }
 
+func (f *fakeMail) Body(ctx context.Context, id string) (string, error) {
+	return "", nil
+}
+
 type fakeCal struct {
 	events []calendar.Event
 	err    error
