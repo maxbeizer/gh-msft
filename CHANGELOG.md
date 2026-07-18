@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org).
 
 ### Added
 
+- `gh msft accept-eula` command to accept the WorkIQ End User License Agreement
+  from the extension. WorkIQ tool errors caused by an unaccepted EULA now hint at
+  running it.
 - Initial release
 - WorkIQ-backed Microsoft 365 access (no credentials stored by this tool):
   - `internal/workiq` MCP stdio client for the WorkIQ Graph proxy (`fetch` / `do_action`).
