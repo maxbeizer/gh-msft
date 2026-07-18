@@ -81,7 +81,7 @@ func (m Model) update(msg tea.Msg) (Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
-		return m, nil
+		return m, tea.ClearScreen
 
 	case messagesLoadedMsg:
 		m.messages = msg.messages
@@ -222,7 +222,7 @@ func (m Model) View() string {
 		if from == "" {
 			from = msg.From.Email
 		}
-		line := fmt.Sprintf("%s%s %-22s %s", cursor, marker, truncate(from, 22), truncate(msg.Subject, 50))
+		line := fmt.Sprintf("%s%s %-22s %s", cursor, marker, truncate(from, 22), truncate(msg.Subject, m.subjectWidth()))
 		switch {
 		case i == m.cursor:
 			line = selectedStyle.Render(line)
@@ -245,6 +245,21 @@ func (m Model) View() string {
 	}
 	b.WriteString("\n")
 	return b.String()
+}
+
+// subjectWidth returns how many columns the subject may use, derived from the
+// terminal width so a resize shows more or less of the title. The fixed prefix
+// (cursor, marker, from column, and separating spaces) is 27 columns.
+func (m Model) subjectWidth() int {
+	const prefix = 27
+	if m.width <= 0 {
+		return 50
+	}
+	w := m.width - prefix
+	if w < 10 {
+		w = 10
+	}
+	return w
 }
 
 func truncate(s string, n int) string {

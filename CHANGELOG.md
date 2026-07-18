@@ -33,3 +33,5 @@ and this project adheres to [Semantic Versioning](https://semver.org).
   (the caller had to Ctrl-C) because `Wait` blocked on a stderr copy goroutine that
   WorkIQ's grandchildren kept open; orphaned WorkIQ processes (and their popup
   windows) also lingered. Close now terminates the whole tree and never blocks.
+- TUI inbox now adapts email subject width to the terminal on resize, showing
+  more or less of the title, and clears the screen on resize to avoid artifacts.
