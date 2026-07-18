@@ -20,7 +20,7 @@ type fakeMail struct {
 	archiveErr error
 }
 
-func (f *fakeMail) ListInbox(ctx context.Context, top int) ([]mail.Message, error) {
+func (f *fakeMail) ListInbox(ctx context.Context, top int, all bool) ([]mail.Message, error) {
 	return f.inbox, f.listErr
 }
 

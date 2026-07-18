@@ -52,7 +52,7 @@ func TestListInboxParsesMessages(t *testing.T) {
 	fg := &fakeGraph{fetchData: sampleInbox}
 	p := NewWorkIQProvider(fg)
 
-	msgs, err := p.ListInbox(context.Background(), 5)
+	msgs, err := p.ListInbox(context.Background(), 5, false)
 	if err != nil {
 		t.Fatalf("ListInbox: %v", err)
 	}
@@ -80,10 +80,35 @@ func TestListInboxParsesMessages(t *testing.T) {
 	}
 }
 
+func TestListInboxDefaultsToInboxFolder(t *testing.T) {
+	fg := &fakeGraph{fetchData: sampleInbox}
+	p := NewWorkIQProvider(fg)
+	if _, err := p.ListInbox(context.Background(), 5, false); err != nil {
+		t.Fatalf("ListInbox: %v", err)
+	}
+	if want := "/me/mailFolders/inbox/messages"; !contains(fg.gotFetchURLs[0], want) {
+		t.Errorf("fetch url %q missing %q", fg.gotFetchURLs[0], want)
+	}
+}
+
+func TestListInboxAllReadsAllMail(t *testing.T) {
+	fg := &fakeGraph{fetchData: sampleInbox}
+	p := NewWorkIQProvider(fg)
+	if _, err := p.ListInbox(context.Background(), 5, true); err != nil {
+		t.Fatalf("ListInbox: %v", err)
+	}
+	if contains(fg.gotFetchURLs[0], "mailFolders") {
+		t.Errorf("fetch url %q should not scope to a folder", fg.gotFetchURLs[0])
+	}
+	if want := "/me/messages"; !contains(fg.gotFetchURLs[0], want) {
+		t.Errorf("fetch url %q missing %q", fg.gotFetchURLs[0], want)
+	}
+}
+
 func TestListInboxEmpty(t *testing.T) {
 	fg := &fakeGraph{fetchData: `{"value":[]}`}
 	p := NewWorkIQProvider(fg)
-	msgs, err := p.ListInbox(context.Background(), 5)
+	msgs, err := p.ListInbox(context.Background(), 5, false)
 	if err != nil {
 		t.Fatalf("ListInbox: %v", err)
 	}
@@ -96,7 +121,7 @@ func TestListInboxMalformedDegradesGracefully(t *testing.T) {
 	// Missing/garbled fields should not panic; bad JSON is an error.
 	fg := &fakeGraph{fetchData: `{"value":[{"id":"X"}]}`}
 	p := NewWorkIQProvider(fg)
-	msgs, err := p.ListInbox(context.Background(), 5)
+	msgs, err := p.ListInbox(context.Background(), 5, false)
 	if err != nil {
 		t.Fatalf("ListInbox: %v", err)
 	}

@@ -14,9 +14,11 @@ type fakeProvider struct {
 	listErr    error
 	archived   []string
 	archiveErr error
+	gotAll     bool
 }
 
-func (f *fakeProvider) ListInbox(ctx context.Context, top int) ([]mail.Message, error) {
+func (f *fakeProvider) ListInbox(ctx context.Context, top int, all bool) ([]mail.Message, error) {
+	f.gotAll = all
 	if f.listErr != nil {
 		return nil, f.listErr
 	}
@@ -44,7 +46,7 @@ func key(s string) tea.KeyMsg {
 }
 
 func TestLoadedPopulatesMessages(t *testing.T) {
-	m := New(&fakeProvider{}, 10)
+	m := New(&fakeProvider{}, 10, false)
 	m, _ = m.update(messagesLoadedMsg{sampleMessages()})
 	if m.loading {
 		t.Fatal("should not be loading after load")
@@ -55,7 +57,7 @@ func TestLoadedPopulatesMessages(t *testing.T) {
 }
 
 func TestNavigationClamps(t *testing.T) {
-	m := New(&fakeProvider{}, 10)
+	m := New(&fakeProvider{}, 10, false)
 	m, _ = m.update(messagesLoadedMsg{sampleMessages()})
 
 	// Up at top stays at 0.
@@ -83,7 +85,7 @@ func TestNavigationClamps(t *testing.T) {
 
 func TestArchiveKeyReturnsCommandAndArchivedRemoves(t *testing.T) {
 	fp := &fakeProvider{}
-	m := New(fp, 10)
+	m := New(fp, 10, false)
 	m, _ = m.update(messagesLoadedMsg{sampleMessages()})
 
 	// Pressing 'a' on the first message should return a command.
@@ -117,7 +119,7 @@ func TestArchiveKeyReturnsCommandAndArchivedRemoves(t *testing.T) {
 
 func TestArchiveErrorSurfaces(t *testing.T) {
 	fp := &fakeProvider{archiveErr: errors.New("nope")}
-	m := New(fp, 10)
+	m := New(fp, 10, false)
 	m, _ = m.update(messagesLoadedMsg{sampleMessages()})
 	_, cmd := m.update(key("a"))
 	if cmd == nil {
@@ -130,7 +132,7 @@ func TestArchiveErrorSurfaces(t *testing.T) {
 }
 
 func TestReadToggle(t *testing.T) {
-	m := New(&fakeProvider{}, 10)
+	m := New(&fakeProvider{}, 10, false)
 	m, _ = m.update(messagesLoadedMsg{sampleMessages()})
 	if m.messages[0].IsRead {
 		t.Fatal("precondition: first should be unread")
@@ -142,7 +144,7 @@ func TestReadToggle(t *testing.T) {
 }
 
 func TestQuitSetsFlag(t *testing.T) {
-	m := New(&fakeProvider{}, 10)
+	m := New(&fakeProvider{}, 10, false)
 	m, cmd := m.update(key("q"))
 	if !m.quitting {
 		t.Error("q should set quitting")
@@ -153,7 +155,7 @@ func TestQuitSetsFlag(t *testing.T) {
 }
 
 func TestLoadErrorSetsErr(t *testing.T) {
-	m := New(&fakeProvider{}, 10)
+	m := New(&fakeProvider{}, 10, false)
 	m, _ = m.update(errMsg{errors.New("boom")})
 	if m.err == nil {
 		t.Error("expected err to be set")
@@ -164,7 +166,7 @@ func TestLoadErrorSetsErr(t *testing.T) {
 }
 
 func TestViewDoesNotPanic(t *testing.T) {
-	m := New(&fakeProvider{}, 10)
+	m := New(&fakeProvider{}, 10, false)
 	_ = m.View() // loading
 	m, _ = m.update(messagesLoadedMsg{sampleMessages()})
 	_ = m.View() // list
@@ -175,7 +177,7 @@ func TestViewDoesNotPanic(t *testing.T) {
 }
 
 func TestEmptyInboxSelectedNil(t *testing.T) {
-	m := New(&fakeProvider{}, 10)
+	m := New(&fakeProvider{}, 10, false)
 	m, _ = m.update(messagesLoadedMsg{nil})
 	if m.selected() != nil {
 		t.Error("selected should be nil for empty inbox")

@@ -7,6 +7,7 @@ import (
 
 func newTUICmd(factory Factory) *cobra.Command {
 	var top int
+	var mailAll bool
 	cmd := &cobra.Command{
 		Use:   "tui",
 		Short: "Launch the interactive inbox",
@@ -18,9 +19,10 @@ func newTUICmd(factory Factory) *cobra.Command {
 			}
 			defer cleanup()
 			sp.stopSpinner()
-			return tui.Run(providers.Mail, top)
+			return tui.Run(providers.Mail, top, mailAll)
 		},
 	}
 	cmd.Flags().IntVar(&top, "top", 50, "maximum number of messages to load")
+	cmd.Flags().BoolVar(&mailAll, "mail-all", false, "load all mail instead of only the inbox")
 	return cmd
 }
