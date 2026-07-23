@@ -52,7 +52,7 @@ func build(cmd *cobra.Command, factory Factory) (*Providers, func(), *spinner, e
 	providers, err := factory(ctx)
 	if err != nil {
 		sp.stopSpinner()
-		return nil, func() {}, sp, fmt.Errorf("%w\nEnsure WorkIQ is installed and you are signed in (run `npx -y @microsoft/workiq accept-eula`)", err)
+		return nil, func() {}, sp, fmt.Errorf("%w\nEnsure WorkIQ is installed and you are signed in (run `gh msft accept-eula`)", err)
 	}
 	cleanup := func() {}
 	if providers.Close != nil {

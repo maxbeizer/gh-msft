@@ -21,6 +21,11 @@ import (
 	"time"
 )
 
+// ErrEULANotAccepted signals that WorkIQ refused a tool call because its End User
+// License Agreement has not been accepted yet. Callers can detect it with
+// errors.Is and point the user at `gh msft accept-eula`.
+var ErrEULANotAccepted = errors.New("workiq: EULA not accepted")
+
 // FetchResult is one entry from the WorkIQ "fetch" tool response envelope. Each
 // requested entity URL yields one FetchResult, in request order.
 type FetchResult struct {
@@ -51,6 +56,16 @@ func commandFor(env func(string) string) (string, []string) {
 		return bin, []string{"mcp"}
 	}
 	return "npx", []string{"-y", "@microsoft/workiq@latest", "mcp"}
+}
+
+// acceptEULACommand returns the command and args to run WorkIQ's one-shot
+// "accept-eula" subcommand, mirroring commandFor's launcher selection. It ignores
+// WORKIQ_MCP_COMMAND, which is specific to launching the MCP server.
+func acceptEULACommand(env func(string) string) (string, []string) {
+	if bin := env("WORKIQ_BIN"); strings.TrimSpace(bin) != "" {
+		return bin, []string{"accept-eula"}
+	}
+	return "npx", []string{"-y", "@microsoft/workiq@latest", "accept-eula"}
 }
 
 // New spawns the WorkIQ MCP server and performs the JSON-RPC initialize handshake.
@@ -190,7 +205,11 @@ func (c *Client) callTool(ctx context.Context, name string, args any) ([]byte, e
 		payload = res.StructuredContent
 	}
 	if res.IsError {
-		return nil, fmt.Errorf("workiq: tool %q reported error: %s", name, strings.TrimSpace(string(payload)))
+		msg := strings.TrimSpace(string(payload))
+		if strings.Contains(strings.ToLower(msg), "accept the eula") {
+			return nil, fmt.Errorf("%w: %s", ErrEULANotAccepted, msg)
+		}
+		return nil, fmt.Errorf("workiq: tool %q reported error: %s", name, msg)
 	}
 	return payload, nil
 }
@@ -245,6 +264,19 @@ func (c *Client) DoAction(ctx context.Context, actionURL string, jsonBody any) (
 		return nil, err
 	}
 	return json.RawMessage(text), nil
+}
+
+// AcceptEULA accepts the WorkIQ End User License Agreement by running WorkIQ's
+// one-shot "accept-eula" subcommand (the invocation confirmed to work in
+// microsoft/work-iq). WorkIQ requires acceptance once before its Graph proxy
+// tools (fetch, do_action) will run. It is safe to call repeatedly.
+func (c *Client) AcceptEULA(ctx context.Context) error {
+	name, args := acceptEULACommand(os.Getenv)
+	out, err := exec.CommandContext(ctx, name, args...).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("workiq: accept-eula %q: %w: %s", name, err, strings.TrimSpace(string(out)))
+	}
+	return nil
 }
 
 // stdioTransport implements newline-delimited JSON-RPC 2.0 over a writer/reader

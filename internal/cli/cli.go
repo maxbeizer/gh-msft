@@ -16,7 +16,13 @@ import (
 type Providers struct {
 	Mail  mail.Provider
 	Cal   calendar.Provider
+	EULA  EULAAccepter
 	Close func()
+}
+
+// EULAAccepter accepts the WorkIQ End User License Agreement.
+type EULAAccepter interface {
+	AcceptEULA(ctx context.Context) error
 }
 
 // Factory builds providers on demand (e.g. spawning WorkIQ). It is only called
@@ -32,6 +38,7 @@ func DefaultFactory(ctx context.Context) (*Providers, error) {
 	return &Providers{
 		Mail:  mail.NewWorkIQProvider(c),
 		Cal:   calendar.NewWorkIQProvider(c),
+		EULA:  c,
 		Close: func() { _ = c.Close() },
 	}, nil
 }
@@ -48,6 +55,7 @@ func NewRootCmd(factory Factory) *cobra.Command {
 	}
 	root.AddCommand(newMailCmd(factory))
 	root.AddCommand(newCalCmd(factory))
+	root.AddCommand(newEULACmd(factory))
 	root.AddCommand(newTUICmd(factory))
 	return root
 }

@@ -2,12 +2,14 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log"
 	"os"
 	"os/signal"
 	"syscall"
 
 	"github.com/maxbeizer/gh-msft/internal/cli"
+	"github.com/maxbeizer/gh-msft/internal/workiq"
 )
 
 func main() {
@@ -32,6 +34,9 @@ func main() {
 	rootCmd := cli.NewRootCmd(cli.DefaultFactory)
 	if err := rootCmd.ExecuteContext(ctx); err != nil {
 		userMessages.Printf("error: %v", err)
+		if errors.Is(err, workiq.ErrEULANotAccepted) {
+			userMessages.Print("run `gh msft accept-eula` to accept it")
+		}
 		os.Exit(1)
 	}
 }

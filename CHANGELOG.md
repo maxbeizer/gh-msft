@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org).
 
 ## [Unreleased]
 
+### Added
+
+- `gh msft accept-eula` command to accept the WorkIQ End User License Agreement
+  from the extension. WorkIQ tool errors caused by an unaccepted EULA now hint at
+  running it.
+
 ## [0.1.0] - 2026-07-23
 
 ### Added
