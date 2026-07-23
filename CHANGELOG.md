@@ -13,6 +13,11 @@ and this project adheres to [Semantic Versioning](https://semver.org).
   from the extension. WorkIQ tool errors caused by an unaccepted EULA now hint at
   running it.
 
+### Fixed
+
+- TUI inbox now adapts email subject width to the terminal on resize, showing
+  more or less of the title, and clears the screen on resize to avoid artifacts.
+
 ## [0.1.0] - 2026-07-23
 
 ### Added
