@@ -7,9 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org).
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-07-23
+
 ### Added
 
-- Initial release
 - WorkIQ-backed Microsoft 365 access (no credentials stored by this tool):
   - `internal/workiq` MCP stdio client for the WorkIQ Graph proxy (`fetch` / `do_action`).
   - `MailProvider` and `CalendarProvider` interfaces with WorkIQ-backed implementations.
