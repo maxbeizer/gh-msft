@@ -18,6 +18,7 @@ type Event struct {
 	Subject   string      `json:"subject"`
 	Start     mstime.Time `json:"start"`
 	End       mstime.Time `json:"end"`
+	IsAllDay  bool        `json:"isAllDay"`
 	Organizer string      `json:"organizer"`
 }
 
@@ -53,6 +54,7 @@ type graphEvent struct {
 	Subject   string        `json:"subject"`
 	Start     graphDateTime `json:"start"`
 	End       graphDateTime `json:"end"`
+	IsAllDay  bool          `json:"isAllDay"`
 	Organizer struct {
 		EmailAddress struct {
 			Name    string `json:"name"`
@@ -74,7 +76,7 @@ func (p *WorkIQProvider) Upcoming(ctx context.Context, top int) ([]Event, error)
 	// calendarView expands recurring instances and supports a time window ordered
 	// by start; it is the right endpoint for an "upcoming" view.
 	url := fmt.Sprintf(
-		"/me/calendarView?startDateTime=%s&endDateTime=%s&$select=subject,start,end,organizer&$orderby=start/dateTime&$top=%d",
+		"/me/calendarView?startDateTime=%s&endDateTime=%s&$select=subject,start,end,isAllDay,organizer&$orderby=start/dateTime&$top=%d",
 		now.Format(time.RFC3339), end.Format(time.RFC3339), top,
 	)
 	results, err := p.c.Fetch(ctx, url)
@@ -90,7 +92,7 @@ func (p *WorkIQProvider) Upcoming(ctx context.Context, top int) ([]Event, error)
 }
 
 func (p *WorkIQProvider) upcomingViaEvents(ctx context.Context, top int) ([]Event, error) {
-	url := fmt.Sprintf("/me/events?$select=subject,start,end,organizer&$orderby=start/dateTime&$top=%d", top)
+	url := fmt.Sprintf("/me/events?$select=subject,start,end,isAllDay,organizer&$orderby=start/dateTime&$top=%d", top)
 	results, err := p.c.Fetch(ctx, url)
 	if err != nil {
 		return nil, err
@@ -117,6 +119,7 @@ func parseEvents(results []workiq.FetchResult) ([]Event, error) {
 			Subject:   ge.Subject,
 			Start:     mstime.Parse(ge.Start.DateTime),
 			End:       mstime.Parse(ge.End.DateTime),
+			IsAllDay:  ge.IsAllDay,
 			Organizer: organizer,
 		})
 	}

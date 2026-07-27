@@ -57,7 +57,7 @@ func writeEvents(w io.Writer, events []calendar.Event, asJSON bool) error {
 	fmt.Fprintln(tw, "WHEN\tSUBJECT\tORGANIZER")
 	for _, e := range events {
 		fmt.Fprintf(tw, "%s\t%s\t%s\n",
-			formatEventWhen(e.Start.Time, e.End.Time),
+			formatEventWhen(e),
 			truncate(e.Subject, maxSubjectLen),
 			truncate(e.Organizer, 24),
 		)
@@ -78,15 +78,30 @@ func formatLocal(t time.Time) string {
 	return t.Local().Format("Jan 02 15:04")
 }
 
-func formatEventWhen(start, end time.Time) string {
+func formatEventWhen(e calendar.Event) string {
+	start := e.Start.Time
 	if start.IsZero() {
 		return "-"
 	}
+	if e.IsAllDay {
+		return start.Format("Mon Jan 02") + " all day"
+	}
 	s := start.Local()
-	if end.IsZero() {
+	if e.End.IsZero() {
 		return s.Format("Mon Jan 02 15:04")
 	}
-	return fmt.Sprintf("%s-%s", s.Format("Mon Jan 02 15:04"), end.Local().Format("15:04"))
+	end := e.End.Local()
+	if sameDay(s, end) {
+		return fmt.Sprintf("%s-%s", s.Format("Mon Jan 02 15:04"), end.Format("15:04"))
+	}
+	return fmt.Sprintf("%s-%s", s.Format("Mon Jan 02 15:04"), end.Format("Mon Jan 02 15:04"))
+}
+
+// sameDay reports whether a and b fall on the same calendar day.
+func sameDay(a, b time.Time) bool {
+	ay, am, ad := a.Date()
+	by, bm, bd := b.Date()
+	return ay == by && am == bm && ad == bd
 }
 
 func truncate(s string, n int) string {

@@ -7,7 +7,9 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/maxbeizer/gh-msft/internal/calendar"
 	"github.com/maxbeizer/gh-msft/internal/mail"
+	"github.com/maxbeizer/gh-msft/internal/mstime"
 )
 
 type fakeProvider struct {
@@ -37,6 +39,18 @@ func (f *fakeProvider) Archive(ctx context.Context, id string) error {
 	return nil
 }
 
+type fakeCal struct {
+	events []calendar.Event
+	err    error
+}
+
+func (f *fakeCal) Upcoming(ctx context.Context, top int) ([]calendar.Event, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	return f.events, nil
+}
+
 func (f *fakeProvider) Body(ctx context.Context, id string) (string, error) {
 	f.bodyIDs = append(f.bodyIDs, id)
 	if f.bodyErr != nil {
@@ -50,6 +64,15 @@ func sampleMessages() []mail.Message {
 		{ID: "1", Subject: "First", From: mail.Address{Name: "Alice"}, IsRead: false},
 		{ID: "2", Subject: "Second", From: mail.Address{Name: "Bob"}, IsRead: true},
 		{ID: "3", Subject: "Third", From: mail.Address{Name: "Carol"}, IsRead: false},
+	}
+}
+
+func sampleEvents() []calendar.Event {
+	return []calendar.Event{
+		{ID: "e1", Subject: "Standup", Organizer: "Alice",
+			Start: mstime.Parse("2026-01-02T15:00:00Z"), End: mstime.Parse("2026-01-02T15:15:00Z")},
+		{ID: "e2", Subject: "1:1", Organizer: "Bob",
+			Start: mstime.Parse("2026-01-02T16:00:00Z"), End: mstime.Parse("2026-01-02T16:30:00Z")},
 	}
 }
 
@@ -152,6 +175,122 @@ func TestReadToggle(t *testing.T) {
 	m, _ = m.update(key("r"))
 	if !m.messages[0].IsRead {
 		t.Error("r should toggle read state")
+	}
+}
+
+func TestTabTogglesModeAndLoadsEvents(t *testing.T) {
+	m := New(&fakeProvider{}, 10, false)
+	m.cal = &fakeCal{events: sampleEvents()}
+	m, _ = m.update(messagesLoadedMsg{sampleMessages()})
+	if m.mode != mailMode {
+		t.Fatalf("mode = %d, want mailMode", m.mode)
+	}
+
+	tab := tea.KeyMsg{Type: tea.KeyTab}
+	// First tab: switch to calendar; events not loaded yet so a load command runs.
+	m, cmd := m.update(tab)
+	if m.mode != calendarMode {
+		t.Errorf("after tab, mode = %d, want calendarMode", m.mode)
+	}
+	if cmd == nil {
+		t.Fatal("expected events load command on first switch to calendar")
+	}
+	res := cmd()
+	ev, ok := res.(eventsLoadedMsg)
+	if !ok {
+		t.Fatalf("expected eventsLoadedMsg, got %T", res)
+	}
+	m, _ = m.update(ev)
+	if len(m.events) != 2 {
+		t.Errorf("got %d events, want 2", len(m.events))
+	}
+
+	// Second tab: back to mail; already loaded so no command.
+	m, cmd = m.update(tab)
+	if m.mode != mailMode {
+		t.Errorf("after second tab, mode = %d, want mailMode", m.mode)
+	}
+	if cmd != nil {
+		t.Error("mail already loaded; expected no command on switch back")
+	}
+
+	// Third tab: back to calendar; already loaded so no command.
+	m, cmd = m.update(tab)
+	if cmd != nil {
+		t.Error("calendar already loaded; expected no reload command")
+	}
+}
+
+func TestEventWhenSingleVsMultiDay(t *testing.T) {
+	single := calendar.Event{
+		Start: mstime.Parse("2026-01-02T09:00:00Z"),
+		End:   mstime.Parse("2026-01-02T17:00:00Z"),
+	}
+	got := eventWhen(single)
+	parts := strings.SplitN(got, " - ", 2)
+	if len(parts) != 2 {
+		t.Fatalf("expected a range, got %q", got)
+	}
+	if len(parts[1]) != len("15:04") {
+		t.Errorf("single-day end should be time-only, got %q (full %q)", parts[1], got)
+	}
+
+	multi := calendar.Event{
+		Start: mstime.Parse("2026-01-02T09:00:00Z"),
+		End:   mstime.Parse("2026-01-05T17:00:00Z"),
+	}
+	got = eventWhen(multi)
+	parts = strings.SplitN(got, " - ", 2)
+	if len(parts) != 2 || len(parts[1]) == len("15:04") {
+		t.Errorf("multi-day end should include a date, got %q", got)
+	}
+}
+
+func TestCalendarViewRendersEvents(t *testing.T) {
+	m := New(&fakeProvider{}, 10, false)
+	m.cal = &fakeCal{events: sampleEvents()}
+	m.mode = calendarMode
+	_ = m.View() // loading calendar
+	m, _ = m.update(eventsLoadedMsg{sampleEvents()})
+	out := m.View() // calendar list
+	if !strings.Contains(out, "Standup") {
+		t.Errorf("calendar view missing event subject; got:\n%s", out)
+	}
+	if !strings.Contains(out, " - ") {
+		t.Errorf("calendar view should show start - end range; got:\n%s", out)
+	}
+	m, _ = m.update(eventsLoadedMsg{nil})
+	_ = m.View() // empty calendar
+}
+
+func TestStartInCalendarModeLoadsEvents(t *testing.T) {
+	m := New(&fakeProvider{}, 10, false)
+	m.cal = &fakeCal{events: sampleEvents()}
+	m.mode = calendarMode
+	cmd := m.Init()
+	if cmd == nil {
+		t.Fatal("Init should load events when starting in calendar mode")
+	}
+	if _, ok := cmd().(eventsLoadedMsg); !ok {
+		t.Error("Init in calendar mode should produce eventsLoadedMsg")
+	}
+}
+
+func TestCalendarViewShowsAllDay(t *testing.T) {
+	m := New(&fakeProvider{}, 10, false)
+	m.cal = &fakeCal{}
+	m.mode = calendarMode
+	allDay := []calendar.Event{
+		{ID: "h", Subject: "Company Holiday", IsAllDay: true,
+			Start: mstime.Parse("2026-01-02T00:00:00Z"), End: mstime.Parse("2026-01-03T00:00:00Z")},
+	}
+	m, _ = m.update(eventsLoadedMsg{allDay})
+	out := m.View()
+	if !strings.Contains(out, "all day") {
+		t.Errorf("all-day event should render \"all day\"; got:\n%s", out)
+	}
+	if strings.Contains(out, "00:00") {
+		t.Errorf("all-day event should not show a time; got:\n%s", out)
 	}
 }
 

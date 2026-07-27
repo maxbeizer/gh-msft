@@ -45,19 +45,24 @@ gh msft cal                       # upcoming calendar events
 gh msft cal --json                # machine-readable output
 gh msft accept-eula               # accept the WorkIQ EULA (run once)
 gh msft tui                       # interactive inbox
+gh msft tui --cal                 # start in calendar mode
 ```
 
 ### Interactive inbox (`gh msft tui`)
+
+The TUI has two modes: mail (inbox) and calendar (upcoming events). Press
+`tab` to switch, or start in calendar mode with `--cal`.
 
 | Key        | Action                          |
 | ---------- | ------------------------------- |
 | `j` / `k`  | move down / up (also arrows)    |
 | `g` / `G`  | jump to top / bottom            |
+| `tab`      | switch mail / calendar          |
+| `a`        | archive selected message (mail) |
 | `enter`    | open selected message           |
 | `esc`      | close open message              |
-| `a`        | archive selected message        |
 | `r`        | toggle read state (visual only) |
-| `R`        | refresh inbox                   |
+| `R`        | refresh current view            |
 | `?`        | toggle help                     |
 | `q`        | quit                            |
 

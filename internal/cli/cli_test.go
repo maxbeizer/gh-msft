@@ -163,6 +163,23 @@ func TestCalTable(t *testing.T) {
 	}
 }
 
+func TestCalTableAllDay(t *testing.T) {
+	fc := &fakeCal{events: []calendar.Event{
+		{ID: "H1", Subject: "Company Holiday", Organizer: "HR", IsAllDay: true,
+			Start: mstime.Parse("2026-07-20T00:00:00.0000000"), End: mstime.Parse("2026-07-21T00:00:00.0000000")},
+	}}
+	out, err := run(t, factoryFor(&fakeMail{}, fc), "cal")
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if !strings.Contains(out, "all day") {
+		t.Errorf("all-day event should render \"all day\":\n%s", out)
+	}
+	if strings.Contains(out, "00:00") {
+		t.Errorf("all-day event should not show a time:\n%s", out)
+	}
+}
+
 func TestCalJSON(t *testing.T) {
 	fc := &fakeCal{events: []calendar.Event{
 		{ID: "E1", Subject: "Standup", Organizer: "Max", Start: mstime.Parse("2026-07-20T16:30:00.0000000")},
