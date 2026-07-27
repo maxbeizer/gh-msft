@@ -17,9 +17,14 @@ type fakeProvider struct {
 	listErr    error
 	archived   []string
 	archiveErr error
+	gotAll     bool
+	body       string
+	bodyErr    error
+	bodyIDs    []string
 }
 
-func (f *fakeProvider) ListInbox(ctx context.Context, top int) ([]mail.Message, error) {
+func (f *fakeProvider) ListInbox(ctx context.Context, top int, all bool) ([]mail.Message, error) {
+	f.gotAll = all
 	if f.listErr != nil {
 		return nil, f.listErr
 	}
@@ -46,6 +51,14 @@ func (f *fakeCal) Upcoming(ctx context.Context, top int) ([]calendar.Event, erro
 	return f.events, nil
 }
 
+func (f *fakeProvider) Body(ctx context.Context, id string) (string, error) {
+	f.bodyIDs = append(f.bodyIDs, id)
+	if f.bodyErr != nil {
+		return "", f.bodyErr
+	}
+	return f.body, nil
+}
+
 func sampleMessages() []mail.Message {
 	return []mail.Message{
 		{ID: "1", Subject: "First", From: mail.Address{Name: "Alice"}, IsRead: false},
@@ -68,7 +81,7 @@ func key(s string) tea.KeyMsg {
 }
 
 func TestLoadedPopulatesMessages(t *testing.T) {
-	m := New(&fakeProvider{}, 10)
+	m := New(&fakeProvider{}, 10, false)
 	m, _ = m.update(messagesLoadedMsg{sampleMessages()})
 	if m.loading {
 		t.Fatal("should not be loading after load")
@@ -79,7 +92,7 @@ func TestLoadedPopulatesMessages(t *testing.T) {
 }
 
 func TestNavigationClamps(t *testing.T) {
-	m := New(&fakeProvider{}, 10)
+	m := New(&fakeProvider{}, 10, false)
 	m, _ = m.update(messagesLoadedMsg{sampleMessages()})
 
 	// Up at top stays at 0.
@@ -107,7 +120,7 @@ func TestNavigationClamps(t *testing.T) {
 
 func TestArchiveKeyReturnsCommandAndArchivedRemoves(t *testing.T) {
 	fp := &fakeProvider{}
-	m := New(fp, 10)
+	m := New(fp, 10, false)
 	m, _ = m.update(messagesLoadedMsg{sampleMessages()})
 
 	// Pressing 'a' on the first message should return a command.
@@ -141,7 +154,7 @@ func TestArchiveKeyReturnsCommandAndArchivedRemoves(t *testing.T) {
 
 func TestArchiveErrorSurfaces(t *testing.T) {
 	fp := &fakeProvider{archiveErr: errors.New("nope")}
-	m := New(fp, 10)
+	m := New(fp, 10, false)
 	m, _ = m.update(messagesLoadedMsg{sampleMessages()})
 	_, cmd := m.update(key("a"))
 	if cmd == nil {
@@ -154,7 +167,7 @@ func TestArchiveErrorSurfaces(t *testing.T) {
 }
 
 func TestReadToggle(t *testing.T) {
-	m := New(&fakeProvider{}, 10)
+	m := New(&fakeProvider{}, 10, false)
 	m, _ = m.update(messagesLoadedMsg{sampleMessages()})
 	if m.messages[0].IsRead {
 		t.Fatal("precondition: first should be unread")
@@ -166,7 +179,7 @@ func TestReadToggle(t *testing.T) {
 }
 
 func TestTabTogglesModeAndLoadsEvents(t *testing.T) {
-	m := New(&fakeProvider{}, 10)
+	m := New(&fakeProvider{}, 10, false)
 	m.cal = &fakeCal{events: sampleEvents()}
 	m, _ = m.update(messagesLoadedMsg{sampleMessages()})
 	if m.mode != mailMode {
@@ -234,7 +247,7 @@ func TestEventWhenSingleVsMultiDay(t *testing.T) {
 }
 
 func TestCalendarViewRendersEvents(t *testing.T) {
-	m := New(&fakeProvider{}, 10)
+	m := New(&fakeProvider{}, 10, false)
 	m.cal = &fakeCal{events: sampleEvents()}
 	m.mode = calendarMode
 	_ = m.View() // loading calendar
@@ -251,7 +264,7 @@ func TestCalendarViewRendersEvents(t *testing.T) {
 }
 
 func TestStartInCalendarModeLoadsEvents(t *testing.T) {
-	m := New(&fakeProvider{}, 10)
+	m := New(&fakeProvider{}, 10, false)
 	m.cal = &fakeCal{events: sampleEvents()}
 	m.mode = calendarMode
 	cmd := m.Init()
@@ -264,7 +277,7 @@ func TestStartInCalendarModeLoadsEvents(t *testing.T) {
 }
 
 func TestCalendarViewShowsAllDay(t *testing.T) {
-	m := New(&fakeProvider{}, 10)
+	m := New(&fakeProvider{}, 10, false)
 	m.cal = &fakeCal{}
 	m.mode = calendarMode
 	allDay := []calendar.Event{
@@ -282,7 +295,7 @@ func TestCalendarViewShowsAllDay(t *testing.T) {
 }
 
 func TestQuitSetsFlag(t *testing.T) {
-	m := New(&fakeProvider{}, 10)
+	m := New(&fakeProvider{}, 10, false)
 	m, cmd := m.update(key("q"))
 	if !m.quitting {
 		t.Error("q should set quitting")
@@ -293,7 +306,7 @@ func TestQuitSetsFlag(t *testing.T) {
 }
 
 func TestLoadErrorSetsErr(t *testing.T) {
-	m := New(&fakeProvider{}, 10)
+	m := New(&fakeProvider{}, 10, false)
 	m, _ = m.update(errMsg{errors.New("boom")})
 	if m.err == nil {
 		t.Error("expected err to be set")
@@ -303,8 +316,100 @@ func TestLoadErrorSetsErr(t *testing.T) {
 	}
 }
 
+func TestEnterOpensMessageAndLoadsBody(t *testing.T) {
+	fp := &fakeProvider{body: "hello world"}
+	m := New(fp, 10, false)
+	m, _ = m.update(messagesLoadedMsg{sampleMessages()})
+
+	m, cmd := m.update(key("enter"))
+	if !m.viewing {
+		t.Fatal("enter should open the detail view")
+	}
+	if !m.bodyLoading {
+		t.Fatal("enter should mark body as loading")
+	}
+	if cmd == nil {
+		t.Fatal("enter should return a body command")
+	}
+
+	res := cmd()
+	bm, ok := res.(bodyLoadedMsg)
+	if !ok {
+		t.Fatalf("expected bodyLoadedMsg, got %T", res)
+	}
+	if bm.id != "1" || bm.body != "hello world" {
+		t.Errorf("bodyLoadedMsg = %+v", bm)
+	}
+	if len(fp.bodyIDs) != 1 || fp.bodyIDs[0] != "1" {
+		t.Errorf("provider body ids = %v", fp.bodyIDs)
+	}
+
+	m, _ = m.update(bm)
+	if m.bodyLoading {
+		t.Error("body should no longer be loading")
+	}
+	if m.body != "hello world" {
+		t.Errorf("body = %q", m.body)
+	}
+}
+
+func TestEnterOnEmptyInboxIsNoOp(t *testing.T) {
+	m := New(&fakeProvider{}, 10, false)
+	m, _ = m.update(messagesLoadedMsg{nil})
+	m, cmd := m.update(key("enter"))
+	if m.viewing {
+		t.Error("enter on empty inbox should not open detail view")
+	}
+	if cmd != nil {
+		t.Error("enter on empty inbox should be a no-op")
+	}
+}
+
+func TestDetailViewKeysClose(t *testing.T) {
+	fp := &fakeProvider{body: "body text"}
+	m := New(fp, 10, false)
+	m, _ = m.update(messagesLoadedMsg{sampleMessages()})
+	m, _ = m.update(key("enter"))
+	if !m.viewing {
+		t.Fatal("precondition: should be viewing")
+	}
+
+	m, cmd := m.update(tea.KeyMsg{Type: tea.KeyEsc})
+	if m.viewing {
+		t.Error("esc should close the detail view")
+	}
+	if m.quitting {
+		t.Error("esc should not quit the program")
+	}
+	if cmd != nil {
+		t.Error("esc should not return a command")
+	}
+}
+
+func TestDetailViewBodyErrorSurfaces(t *testing.T) {
+	fp := &fakeProvider{bodyErr: errors.New("boom")}
+	m := New(fp, 10, false)
+	m, _ = m.update(messagesLoadedMsg{sampleMessages()})
+	_, cmd := m.update(key("enter"))
+	if cmd == nil {
+		t.Fatal("expected body command")
+	}
+	res := cmd()
+	em, ok := res.(errMsg)
+	if !ok {
+		t.Fatalf("expected errMsg, got %T", res)
+	}
+	m2, _ := m.update(em)
+	if m2.viewing {
+		t.Error("body error should close the detail view")
+	}
+	if m2.err == nil {
+		t.Error("body error should set err")
+	}
+}
+
 func TestViewDoesNotPanic(t *testing.T) {
-	m := New(&fakeProvider{}, 10)
+	m := New(&fakeProvider{}, 10, false)
 	_ = m.View() // loading
 	m, _ = m.update(messagesLoadedMsg{sampleMessages()})
 	_ = m.View() // list
@@ -315,7 +420,7 @@ func TestViewDoesNotPanic(t *testing.T) {
 }
 
 func TestEmptyInboxSelectedNil(t *testing.T) {
-	m := New(&fakeProvider{}, 10)
+	m := New(&fakeProvider{}, 10, false)
 	m, _ = m.update(messagesLoadedMsg{nil})
 	if m.selected() != nil {
 		t.Error("selected should be nil for empty inbox")
@@ -324,5 +429,46 @@ func TestEmptyInboxSelectedNil(t *testing.T) {
 	_, cmd := m.update(key("a"))
 	if cmd != nil {
 		t.Error("archive on empty inbox should be no-op")
+	}
+}
+
+func TestSubjectWidthTracksResize(t *testing.T) {
+	tests := []struct {
+		name  string
+		width int
+		want  int
+	}{
+		{"unset falls back", 0, 50},
+		{"narrow clamps to min", 20, 10},
+		{"wide grows", 120, 93},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := New(&fakeProvider{}, 10, false)
+			m, _ = m.update(tea.WindowSizeMsg{Width: tt.width, Height: 24})
+			if got := m.subjectWidth(); got != tt.want {
+				t.Errorf("subjectWidth() = %d, want %d", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestResizeShowsMoreSubject(t *testing.T) {
+	long := "This is a very long email subject line that keeps going and going"
+	msgs := []mail.Message{{ID: "1", Subject: long, From: mail.Address{Name: "Alice"}}}
+
+	m := New(&fakeProvider{}, 10, false)
+	m, _ = m.update(messagesLoadedMsg{msgs})
+
+	m, _ = m.update(tea.WindowSizeMsg{Width: 60, Height: 24})
+	narrow := m.View()
+	m, _ = m.update(tea.WindowSizeMsg{Width: 200, Height: 24})
+	wide := m.View()
+
+	if len(wide) <= len(narrow) {
+		t.Errorf("wide view (%d) should render more than narrow (%d)", len(wide), len(narrow))
+	}
+	if !strings.Contains(wide, long) {
+		t.Error("wide view should show the full subject")
 	}
 }

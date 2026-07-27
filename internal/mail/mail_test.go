@@ -52,7 +52,7 @@ func TestListInboxParsesMessages(t *testing.T) {
 	fg := &fakeGraph{fetchData: sampleInbox}
 	p := NewWorkIQProvider(fg)
 
-	msgs, err := p.ListInbox(context.Background(), 5)
+	msgs, err := p.ListInbox(context.Background(), 5, false)
 	if err != nil {
 		t.Fatalf("ListInbox: %v", err)
 	}
@@ -80,10 +80,35 @@ func TestListInboxParsesMessages(t *testing.T) {
 	}
 }
 
+func TestListInboxDefaultsToInboxFolder(t *testing.T) {
+	fg := &fakeGraph{fetchData: sampleInbox}
+	p := NewWorkIQProvider(fg)
+	if _, err := p.ListInbox(context.Background(), 5, false); err != nil {
+		t.Fatalf("ListInbox: %v", err)
+	}
+	if want := "/me/mailFolders/inbox/messages"; !contains(fg.gotFetchURLs[0], want) {
+		t.Errorf("fetch url %q missing %q", fg.gotFetchURLs[0], want)
+	}
+}
+
+func TestListInboxAllReadsAllMail(t *testing.T) {
+	fg := &fakeGraph{fetchData: sampleInbox}
+	p := NewWorkIQProvider(fg)
+	if _, err := p.ListInbox(context.Background(), 5, true); err != nil {
+		t.Fatalf("ListInbox: %v", err)
+	}
+	if contains(fg.gotFetchURLs[0], "mailFolders") {
+		t.Errorf("fetch url %q should not scope to a folder", fg.gotFetchURLs[0])
+	}
+	if want := "/me/messages"; !contains(fg.gotFetchURLs[0], want) {
+		t.Errorf("fetch url %q missing %q", fg.gotFetchURLs[0], want)
+	}
+}
+
 func TestListInboxEmpty(t *testing.T) {
 	fg := &fakeGraph{fetchData: `{"value":[]}`}
 	p := NewWorkIQProvider(fg)
-	msgs, err := p.ListInbox(context.Background(), 5)
+	msgs, err := p.ListInbox(context.Background(), 5, false)
 	if err != nil {
 		t.Fatalf("ListInbox: %v", err)
 	}
@@ -96,7 +121,7 @@ func TestListInboxMalformedDegradesGracefully(t *testing.T) {
 	// Missing/garbled fields should not panic; bad JSON is an error.
 	fg := &fakeGraph{fetchData: `{"value":[{"id":"X"}]}`}
 	p := NewWorkIQProvider(fg)
-	msgs, err := p.ListInbox(context.Background(), 5)
+	msgs, err := p.ListInbox(context.Background(), 5, false)
 	if err != nil {
 		t.Fatalf("ListInbox: %v", err)
 	}
@@ -129,6 +154,43 @@ func TestArchiveSendsMoveAction(t *testing.T) {
 func TestArchiveRequiresID(t *testing.T) {
 	p := NewWorkIQProvider(&fakeGraph{})
 	if err := p.Archive(context.Background(), ""); err == nil {
+		t.Fatal("expected error for empty id")
+	}
+}
+
+func TestBodyHTMLBecomesPlainText(t *testing.T) {
+	fg := &fakeGraph{fetchData: `{"body":{"contentType":"html","content":"<html><body><p>Hi&nbsp;there</p><br><div>Line two</div></body></html>"}}`}
+	p := NewWorkIQProvider(fg)
+	body, err := p.Body(context.Background(), "AAA1")
+	if err != nil {
+		t.Fatalf("Body: %v", err)
+	}
+	if contains(body, "<") {
+		t.Errorf("body still has tags: %q", body)
+	}
+	if !contains(body, "Hi") || !contains(body, "Line two") {
+		t.Errorf("body missing text: %q", body)
+	}
+	if len(fg.gotFetchURLs) != 1 || !contains(fg.gotFetchURLs[0], "/me/messages/AAA1") {
+		t.Errorf("fetch url = %v", fg.gotFetchURLs)
+	}
+}
+
+func TestBodyTextPassesThrough(t *testing.T) {
+	fg := &fakeGraph{fetchData: `{"body":{"contentType":"text","content":"plain body"}}`}
+	p := NewWorkIQProvider(fg)
+	body, err := p.Body(context.Background(), "AAA1")
+	if err != nil {
+		t.Fatalf("Body: %v", err)
+	}
+	if body != "plain body" {
+		t.Errorf("body = %q, want %q", body, "plain body")
+	}
+}
+
+func TestBodyRequiresID(t *testing.T) {
+	p := NewWorkIQProvider(&fakeGraph{})
+	if _, err := p.Body(context.Background(), ""); err == nil {
 		t.Fatal("expected error for empty id")
 	}
 }

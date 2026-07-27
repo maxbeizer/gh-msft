@@ -9,17 +9,33 @@ and this project adheres to [Semantic Versioning](https://semver.org).
 
 ### Added
 
-- Initial release
+- `gh msft accept-eula` command to accept the WorkIQ End User License Agreement
+  from the extension. WorkIQ tool errors caused by an unaccepted EULA now hint at
+  running it.
+
+### Fixed
+
+- TUI inbox now adapts email subject width to the terminal on resize, showing
+  more or less of the title, and clears the screen on resize to avoid artifacts.
+
+## [0.1.0] - 2026-07-23
+
+### Added
+
 - WorkIQ-backed Microsoft 365 access (no credentials stored by this tool):
   - `internal/workiq` MCP stdio client for the WorkIQ Graph proxy (`fetch` / `do_action`).
   - `MailProvider` and `CalendarProvider` interfaces with WorkIQ-backed implementations.
-- Commands: `gh msft mail list [--top N] [--json]`, `gh msft mail archive <id...> [--stdin]`,
+- Commands: `gh msft mail list [--top N] [--json] [--all]`, `gh msft mail archive <id...> [--stdin]`,
   `gh msft cal [--top N] [--json]`.
 - Interactive inbox TUI (`gh msft tui`) built on Bubble Tea (navigate, archive, refresh).
 - Calendar mode in the TUI: press `tab` to switch between mail and calendar, or
   start in calendar mode with `gh msft tui --cal`.
 - All-day and multi-day calendar events render clearly: all-day events show the
   date plus `all day` (no `00:00`), and events that span days show the end date.
+- `enter` in the inbox TUI opens the selected message in a detail view showing the
+  subject, received time, full `From`/`To` addresses, and the message body (HTML mail
+  is converted to plain text). `esc`/`enter` returns to the list. The provider gains a
+  `Body(ctx, id)` method and `ListInbox` now selects `toRecipients`.
 - Startup progress spinner on stderr while WorkIQ launches and data loads, so a
   cold start no longer looks like a hang. Shown only on an interactive terminal;
   piped/`--json` output on stdout stays clean.

@@ -18,8 +18,9 @@ system's Microsoft SSO broker — owns authentication for your signed-in Microso
 ### Prerequisites
 
 - [Node.js](https://nodejs.org/) (provides `npx`).
-- WorkIQ set up and consented once: `npx -y @microsoft/workiq accept-eula`
-  (admin consent may be required on your tenant — see the WorkIQ docs).
+- WorkIQ set up and consented once. Accept the EULA with `gh msft accept-eula`
+  (or `npx -y @microsoft/workiq accept-eula`); admin consent may be required on
+  your tenant — see the WorkIQ docs.
 
 By default `gh-msft` launches `npx -y @microsoft/workiq@latest mcp`. Override with:
 
@@ -36,11 +37,13 @@ gh extension install maxbeizer/gh-msft
 
 ```bash
 gh msft mail list                 # recent inbox messages
+gh msft mail list --all           # include all mail, not just the inbox
 gh msft mail list --top 50 --json # machine-readable output
 gh msft mail archive <id>         # move a message to Archive
 gh msft mail list --json | jq -r '.[].id' | gh msft mail archive --stdin
 gh msft cal                       # upcoming calendar events
 gh msft cal --json                # machine-readable output
+gh msft accept-eula               # accept the WorkIQ EULA (run once)
 gh msft tui                       # interactive inbox
 gh msft tui --cal                 # start in calendar mode
 ```
@@ -56,6 +59,8 @@ The TUI has two modes: mail (inbox) and calendar (upcoming events). Press
 | `g` / `G`  | jump to top / bottom            |
 | `tab`      | switch mail / calendar          |
 | `a`        | archive selected message (mail) |
+| `enter`    | open selected message           |
+| `esc`      | close open message              |
 | `r`        | toggle read state (visual only) |
 | `R`        | refresh current view            |
 | `?`        | toggle help                     |

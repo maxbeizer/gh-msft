@@ -18,6 +18,10 @@ import (
 // Message types exchanged with the Bubble Tea runtime.
 type messagesLoadedMsg struct{ messages []mail.Message }
 type eventsLoadedMsg struct{ events []calendar.Event }
+type bodyLoadedMsg struct {
+	id   string
+	body string
+}
 type archivedMsg struct{ id string }
 type errMsg struct{ err error }
 
@@ -34,6 +38,7 @@ type Model struct {
 	provider mail.Provider
 	cal      calendar.Provider
 	top      int
+	all      bool
 	mode     mode
 
 	messages   []mail.Message
@@ -48,17 +53,21 @@ type Model struct {
 	showHelp bool
 	quitting bool
 
+	viewing     bool
+	body        string
+	bodyLoading bool
+
 	width  int
 	height int
 }
 
-// New builds a model for the given mail provider. Set the calendar provider via
-// the returned model's cal field (Run does this) before entering calendar mode.
-func New(provider mail.Provider, top int) Model {
+// New builds a model for the given mail provider. When all is true it loads all
+// mail instead of only the inbox.
+func New(provider mail.Provider, top int, all bool) Model {
 	if top <= 0 {
 		top = 50
 	}
-	return Model{provider: provider, top: top, loading: true}
+	return Model{provider: provider, top: top, all: all, loading: true}
 }
 
 // Init kicks off the initial load for the starting mode.
@@ -70,9 +79,9 @@ func (m Model) Init() tea.Cmd {
 }
 
 func (m Model) loadCmd() tea.Cmd {
-	provider, top := m.provider, m.top
+	provider, top, all := m.provider, m.top, m.all
 	return func() tea.Msg {
-		msgs, err := provider.ListInbox(context.Background(), top)
+		msgs, err := provider.ListInbox(context.Background(), top, all)
 		if err != nil {
 			return errMsg{err}
 		}
@@ -103,6 +112,16 @@ func archiveCmd(provider mail.Provider, id string) tea.Cmd {
 	}
 }
 
+func bodyCmd(provider mail.Provider, id string) tea.Cmd {
+	return func() tea.Msg {
+		body, err := provider.Body(context.Background(), id)
+		if err != nil {
+			return errMsg{err}
+		}
+		return bodyLoadedMsg{id: id, body: body}
+	}
+}
+
 // Update satisfies tea.Model. The concrete-typed update method below carries the
 // real logic so it can be unit-tested without interface boxing.
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -116,7 +135,7 @@ func (m Model) update(msg tea.Msg) (Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
-		return m, nil
+		return m, tea.ClearScreen
 
 	case messagesLoadedMsg:
 		m.messages = msg.messages
@@ -134,9 +153,16 @@ func (m Model) update(msg tea.Msg) (Model, tea.Cmd) {
 		m.clampCursor()
 		return m, nil
 
+	case bodyLoadedMsg:
+		m.body = msg.body
+		m.bodyLoading = false
+		return m, nil
+
 	case errMsg:
 		m.err = msg.err
 		m.loading = false
+		m.bodyLoading = false
+		m.viewing = false
 		return m, nil
 
 	case archivedMsg:
@@ -151,6 +177,19 @@ func (m Model) update(msg tea.Msg) (Model, tea.Cmd) {
 }
 
 func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd) {
+	if m.viewing {
+		switch msg.String() {
+		case "ctrl+c":
+			m.quitting = true
+			return m, tea.Quit
+		case "esc", "enter", "q", "backspace":
+			m.viewing = false
+			m.body = ""
+			m.bodyLoading = false
+			return m, nil
+		}
+		return m, nil
+	}
 	switch msg.String() {
 	case "ctrl+c", "q":
 		m.quitting = true
@@ -166,6 +205,16 @@ func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 			return m, cmd
 		}
 		return m, nil
+	case "enter":
+		sel := m.selected()
+		if sel == nil {
+			return m, nil
+		}
+		m.viewing = true
+		m.bodyLoading = true
+		m.body = ""
+		m.status = ""
+		return m, bodyCmd(m.provider, sel.ID)
 	case "j", "down":
 		m.moveCursor(1)
 		return m, nil
@@ -289,7 +338,13 @@ func (m Model) View() string {
 		if m.mode == calendarMode {
 			return "Loading calendar…\n"
 		}
+		if m.all {
+			return "Loading all mail…\n"
+		}
 		return "Loading inbox…\n"
+	}
+	if m.viewing {
+		return m.detailView()
 	}
 	if m.mode == calendarMode {
 		return m.viewCalendar()
@@ -319,7 +374,7 @@ func (m Model) viewMail() string {
 		if from == "" {
 			from = msg.From.Email
 		}
-		line := fmt.Sprintf("%s%s %-22s %s", cursor, marker, truncate(from, 22), truncate(msg.Subject, 50))
+		line := fmt.Sprintf("%s%s %-22s %s", cursor, marker, truncate(from, 22), truncate(msg.Subject, m.subjectWidth()))
 		switch {
 		case i == m.cursor:
 			line = selectedStyle.Render(line)
@@ -398,12 +453,87 @@ func (m Model) footer() string {
 		b.WriteString("\n")
 	}
 	if m.showHelp {
-		b.WriteString(helpStyle.Render("j/k move · a archive · r toggle read · R refresh · g/G top/bottom · tab mail/calendar · ? help · q quit"))
+		b.WriteString(helpStyle.Render("j/k move · enter open · a archive · r toggle read · R refresh · g/G top/bottom · tab mail/calendar · ? help · q quit"))
 	} else {
-		b.WriteString(helpStyle.Render("tab switch · ? help · q quit"))
+		b.WriteString(helpStyle.Render("enter open · tab switch · ? help · q quit"))
 	}
 	b.WriteString("\n")
 	return b.String()
+}
+
+// detailView renders the body of the selected message.
+func (m Model) detailView() string {
+	sel := m.selected()
+	if sel == nil {
+		return "No message.\n\nPress esc to go back.\n"
+	}
+
+	var b strings.Builder
+	width := m.width
+	if width <= 0 {
+		width = 80
+	}
+	b.WriteString(titleStyle.Render(lipgloss.NewStyle().Width(width).Render(sel.Subject)))
+	b.WriteString("\n\n")
+	if !sel.Received.IsZero() {
+		b.WriteString(helpStyle.Render("Received: " + sel.Received.Time.Local().Format("Jan 02 15:04")))
+		b.WriteString("\n")
+	}
+	b.WriteString(helpStyle.Width(width).Render("From: " + formatAddr(sel.From)))
+	b.WriteString("\n")
+	b.WriteString(helpStyle.Width(width).Render("To: " + formatAddrs(sel.To)))
+	b.WriteString("\n")
+	b.WriteString("\n")
+	switch {
+	case m.bodyLoading:
+		b.WriteString("Loading message…\n")
+	case m.body == "":
+		b.WriteString("(empty message)\n")
+	default:
+		b.WriteString(lipgloss.NewStyle().Width(width).Render(m.body))
+		b.WriteString("\n")
+	}
+	b.WriteString("\n")
+	b.WriteString(helpStyle.Render("esc/enter back · ctrl+c quit"))
+	b.WriteString("\n")
+	return b.String()
+}
+
+func formatAddr(a mail.Address) string {
+	switch {
+	case a.Name != "" && a.Email != "":
+		return fmt.Sprintf("%s <%s>", a.Name, a.Email)
+	case a.Email != "":
+		return a.Email
+	default:
+		return a.Name
+	}
+}
+
+func formatAddrs(as []mail.Address) string {
+	if len(as) == 0 {
+		return "-"
+	}
+	parts := make([]string, len(as))
+	for i, a := range as {
+		parts[i] = formatAddr(a)
+	}
+	return strings.Join(parts, ", ")
+}
+
+// subjectWidth returns how many columns the subject may use, derived from the
+// terminal width so a resize shows more or less of the title. The fixed prefix
+// (cursor, marker, from column, and separating spaces) is 27 columns.
+func (m Model) subjectWidth() int {
+	const prefix = 27
+	if m.width <= 0 {
+		return 50
+	}
+	w := m.width - prefix
+	if w < 10 {
+		w = 10
+	}
+	return w
 }
 
 func truncate(s string, n int) string {
@@ -417,10 +547,11 @@ func truncate(s string, n int) string {
 	return s[:n-1] + "…"
 }
 
-// Run starts the interactive TUI against the given providers. When startCalendar
-// is true the TUI opens in calendar mode instead of mail mode.
-func Run(mailP mail.Provider, calP calendar.Provider, top int, startCalendar bool) error {
-	m := New(mailP, top)
+// Run starts the interactive TUI against the given providers. When all is true
+// the mail mode loads all messages; when startCalendar is true the TUI opens in
+// calendar mode instead of mail mode.
+func Run(mailP mail.Provider, calP calendar.Provider, top int, all bool, startCalendar bool) error {
+	m := New(mailP, top, all)
 	m.cal = calP
 	if startCalendar {
 		m.mode = calendarMode

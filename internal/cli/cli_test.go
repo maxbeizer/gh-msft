@@ -20,7 +20,7 @@ type fakeMail struct {
 	archiveErr error
 }
 
-func (f *fakeMail) ListInbox(ctx context.Context, top int) ([]mail.Message, error) {
+func (f *fakeMail) ListInbox(ctx context.Context, top int, all bool) ([]mail.Message, error) {
 	return f.inbox, f.listErr
 }
 
@@ -32,6 +32,10 @@ func (f *fakeMail) Archive(ctx context.Context, id string) error {
 	return nil
 }
 
+func (f *fakeMail) Body(ctx context.Context, id string) (string, error) {
+	return "", nil
+}
+
 type fakeCal struct {
 	events []calendar.Event
 	err    error
@@ -41,9 +45,25 @@ func (f *fakeCal) Upcoming(ctx context.Context, top int) ([]calendar.Event, erro
 	return f.events, f.err
 }
 
+type fakeEULA struct {
+	called bool
+	err    error
+}
+
+func (f *fakeEULA) AcceptEULA(ctx context.Context) error {
+	f.called = true
+	return f.err
+}
+
 func factoryFor(m mail.Provider, c calendar.Provider) Factory {
 	return func(ctx context.Context) (*Providers, error) {
 		return &Providers{Mail: m, Cal: c, Close: func() {}}, nil
+	}
+}
+
+func factoryWithEULA(e EULAAccepter) Factory {
+	return func(ctx context.Context) (*Providers, error) {
+		return &Providers{EULA: e, Close: func() {}}, nil
 	}
 }
 
@@ -174,6 +194,28 @@ func TestCalJSON(t *testing.T) {
 	}
 	if len(got) != 1 || got[0].Subject != "Standup" {
 		t.Errorf("unexpected: %+v", got)
+	}
+}
+
+func TestAcceptEULACmd(t *testing.T) {
+	fe := &fakeEULA{}
+	out, err := run(t, factoryWithEULA(fe), "accept-eula")
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if !fe.called {
+		t.Error("AcceptEULA was not called")
+	}
+	if !strings.Contains(out, "EULA accepted") {
+		t.Errorf("missing confirmation:\n%s", out)
+	}
+}
+
+func TestAcceptEULACmdPropagatesError(t *testing.T) {
+	fe := &fakeEULA{err: errors.New("boom")}
+	_, err := run(t, factoryWithEULA(fe), "accept-eula")
+	if err == nil {
+		t.Fatal("expected accept-eula error to propagate")
 	}
 }
 
