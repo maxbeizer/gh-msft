@@ -28,6 +28,10 @@ and this project adheres to [Semantic Versioning](https://semver.org).
 - Commands: `gh msft mail list [--top N] [--json]`, `gh msft mail archive <id...> [--stdin]`,
   `gh msft cal [--top N] [--json]`.
 - Interactive inbox TUI (`gh msft tui`) built on Bubble Tea (navigate, archive, refresh).
+- `enter` in the inbox TUI opens the selected message in a detail view showing the
+  subject, received time, full `From`/`To` addresses, and the message body (HTML mail
+  is converted to plain text). `esc`/`enter` returns to the list. The provider gains a
+  `Body(ctx, id)` method and `ListInbox` now selects `toRecipients`.
 - Startup progress spinner on stderr while WorkIQ launches and data loads, so a
   cold start no longer looks like a hang. Shown only on an interactive terminal;
   piped/`--json` output on stdout stays clean.

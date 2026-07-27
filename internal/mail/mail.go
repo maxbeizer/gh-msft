@@ -8,6 +8,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"html"
+	"regexp"
+	"strings"
 
 	"github.com/maxbeizer/gh-msft/internal/mstime"
 	"github.com/maxbeizer/gh-msft/internal/workiq"
@@ -24,6 +27,7 @@ type Message struct {
 	ID       string      `json:"id"`
 	Subject  string      `json:"subject"`
 	From     Address     `json:"from"`
+	To       []Address   `json:"to"`
 	Received mstime.Time `json:"received"`
 	IsRead   bool        `json:"isRead"`
 }
@@ -34,6 +38,8 @@ type Provider interface {
 	ListInbox(ctx context.Context, top int) ([]Message, error)
 	// Archive moves the message with the given id to the Archive folder.
 	Archive(ctx context.Context, id string) error
+	// Body returns the plain-text body of the message with the given id.
+	Body(ctx context.Context, id string) (string, error)
 }
 
 // graphClient is the subset of the WorkIQ client this package needs. Defined here
@@ -65,6 +71,12 @@ type graphMessage struct {
 			Address string `json:"address"`
 		} `json:"emailAddress"`
 	} `json:"from"`
+	ToRecipients []struct {
+		EmailAddress struct {
+			Name    string `json:"name"`
+			Address string `json:"address"`
+		} `json:"emailAddress"`
+	} `json:"toRecipients"`
 }
 
 type graphMessageCollection struct {
@@ -75,7 +87,7 @@ func (p *WorkIQProvider) ListInbox(ctx context.Context, top int) ([]Message, err
 	if top <= 0 {
 		top = 25
 	}
-	url := fmt.Sprintf("/me/messages?$select=subject,from,receivedDateTime,isRead&$top=%d&$orderby=receivedDateTime desc", top)
+	url := fmt.Sprintf("/me/messages?$select=subject,from,toRecipients,receivedDateTime,isRead&$top=%d&$orderby=receivedDateTime desc", top)
 	results, err := p.c.Fetch(ctx, url)
 	if err != nil {
 		return nil, err
@@ -89,6 +101,13 @@ func (p *WorkIQProvider) ListInbox(ctx context.Context, top int) ([]Message, err
 	}
 	msgs := make([]Message, 0, len(coll.Value))
 	for _, gm := range coll.Value {
+		to := make([]Address, 0, len(gm.ToRecipients))
+		for _, r := range gm.ToRecipients {
+			to = append(to, Address{
+				Name:  r.EmailAddress.Name,
+				Email: r.EmailAddress.Address,
+			})
+		}
 		msgs = append(msgs, Message{
 			ID:      gm.ID,
 			Subject: gm.Subject,
@@ -96,6 +115,7 @@ func (p *WorkIQProvider) ListInbox(ctx context.Context, top int) ([]Message, err
 				Name:  gm.From.EmailAddress.Name,
 				Email: gm.From.EmailAddress.Address,
 			},
+			To:       to,
 			Received: mstime.Parse(gm.ReceivedDateTime),
 			IsRead:   gm.IsRead,
 		})
@@ -110,4 +130,58 @@ func (p *WorkIQProvider) Archive(ctx context.Context, id string) error {
 	url := fmt.Sprintf("/me/messages/%s/move", id)
 	_, err := p.c.DoAction(ctx, url, map[string]string{"DestinationId": "archive"})
 	return err
+}
+
+// graphBody mirrors the body of a single Microsoft Graph message.
+type graphBody struct {
+	Body struct {
+		ContentType string `json:"contentType"`
+		Content     string `json:"content"`
+	} `json:"body"`
+}
+
+func (p *WorkIQProvider) Body(ctx context.Context, id string) (string, error) {
+	if id == "" {
+		return "", fmt.Errorf("mail: Body requires a message id")
+	}
+	url := fmt.Sprintf("/me/messages/%s?$select=body", id)
+	results, err := p.c.Fetch(ctx, url)
+	if err != nil {
+		return "", err
+	}
+	if len(results) == 0 {
+		return "", nil
+	}
+	var gb graphBody
+	if err := json.Unmarshal(results[0].Data, &gb); err != nil {
+		return "", fmt.Errorf("mail: decode body: %w", err)
+	}
+	content := gb.Body.Content
+	if strings.EqualFold(gb.Body.ContentType, "html") {
+		content = htmlToText(content)
+	}
+	return content, nil
+}
+
+var (
+	htmlScriptStyleRE = regexp.MustCompile(`(?is)<(script|style)[^>]*>.*?</(script|style)>`)
+	htmlBreakRE       = regexp.MustCompile(`(?i)<(br|/p|/div|/tr|/li|/h[1-6])[^>]*>`)
+	htmlTagRE         = regexp.MustCompile(`(?s)<[^>]+>`)
+	htmlBlankRE       = regexp.MustCompile(`\n{3,}`)
+)
+
+// htmlToText turns an HTML mail body into readable plain text.
+func htmlToText(s string) string {
+	s = htmlScriptStyleRE.ReplaceAllString(s, "")
+	s = htmlBreakRE.ReplaceAllString(s, "\n")
+	s = htmlTagRE.ReplaceAllString(s, "")
+	s = html.UnescapeString(s)
+	s = strings.ReplaceAll(s, "\r", "")
+	lines := strings.Split(s, "\n")
+	for i, ln := range lines {
+		lines[i] = strings.TrimRight(ln, " \t")
+	}
+	s = strings.Join(lines, "\n")
+	s = htmlBlankRE.ReplaceAllString(s, "\n\n")
+	return strings.TrimSpace(s)
 }

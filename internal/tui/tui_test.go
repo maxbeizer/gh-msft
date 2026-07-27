@@ -15,6 +15,9 @@ type fakeProvider struct {
 	listErr    error
 	archived   []string
 	archiveErr error
+	body       string
+	bodyErr    error
+	bodyIDs    []string
 }
 
 func (f *fakeProvider) ListInbox(ctx context.Context, top int) ([]mail.Message, error) {
@@ -30,6 +33,14 @@ func (f *fakeProvider) Archive(ctx context.Context, id string) error {
 	}
 	f.archived = append(f.archived, id)
 	return nil
+}
+
+func (f *fakeProvider) Body(ctx context.Context, id string) (string, error) {
+	f.bodyIDs = append(f.bodyIDs, id)
+	if f.bodyErr != nil {
+		return "", f.bodyErr
+	}
+	return f.body, nil
 }
 
 func sampleMessages() []mail.Message {
@@ -161,6 +172,98 @@ func TestLoadErrorSetsErr(t *testing.T) {
 	}
 	if m.loading {
 		t.Error("should not be loading after error")
+	}
+}
+
+func TestEnterOpensMessageAndLoadsBody(t *testing.T) {
+	fp := &fakeProvider{body: "hello world"}
+	m := New(fp, 10)
+	m, _ = m.update(messagesLoadedMsg{sampleMessages()})
+
+	m, cmd := m.update(key("enter"))
+	if !m.viewing {
+		t.Fatal("enter should open the detail view")
+	}
+	if !m.bodyLoading {
+		t.Fatal("enter should mark body as loading")
+	}
+	if cmd == nil {
+		t.Fatal("enter should return a body command")
+	}
+
+	res := cmd()
+	bm, ok := res.(bodyLoadedMsg)
+	if !ok {
+		t.Fatalf("expected bodyLoadedMsg, got %T", res)
+	}
+	if bm.id != "1" || bm.body != "hello world" {
+		t.Errorf("bodyLoadedMsg = %+v", bm)
+	}
+	if len(fp.bodyIDs) != 1 || fp.bodyIDs[0] != "1" {
+		t.Errorf("provider body ids = %v", fp.bodyIDs)
+	}
+
+	m, _ = m.update(bm)
+	if m.bodyLoading {
+		t.Error("body should no longer be loading")
+	}
+	if m.body != "hello world" {
+		t.Errorf("body = %q", m.body)
+	}
+}
+
+func TestEnterOnEmptyInboxIsNoOp(t *testing.T) {
+	m := New(&fakeProvider{}, 10)
+	m, _ = m.update(messagesLoadedMsg{nil})
+	m, cmd := m.update(key("enter"))
+	if m.viewing {
+		t.Error("enter on empty inbox should not open detail view")
+	}
+	if cmd != nil {
+		t.Error("enter on empty inbox should be a no-op")
+	}
+}
+
+func TestDetailViewKeysClose(t *testing.T) {
+	fp := &fakeProvider{body: "body text"}
+	m := New(fp, 10)
+	m, _ = m.update(messagesLoadedMsg{sampleMessages()})
+	m, _ = m.update(key("enter"))
+	if !m.viewing {
+		t.Fatal("precondition: should be viewing")
+	}
+
+	m, cmd := m.update(tea.KeyMsg{Type: tea.KeyEsc})
+	if m.viewing {
+		t.Error("esc should close the detail view")
+	}
+	if m.quitting {
+		t.Error("esc should not quit the program")
+	}
+	if cmd != nil {
+		t.Error("esc should not return a command")
+	}
+}
+
+func TestDetailViewBodyErrorSurfaces(t *testing.T) {
+	fp := &fakeProvider{bodyErr: errors.New("boom")}
+	m := New(fp, 10)
+	m, _ = m.update(messagesLoadedMsg{sampleMessages()})
+	_, cmd := m.update(key("enter"))
+	if cmd == nil {
+		t.Fatal("expected body command")
+	}
+	res := cmd()
+	em, ok := res.(errMsg)
+	if !ok {
+		t.Fatalf("expected errMsg, got %T", res)
+	}
+	m2, _ := m.update(em)
+	if m2.viewing {
+		t.Error("body error should close the detail view")
+	}
+	if m2.err == nil {
+		t.Error("body error should set err")
 	}
 }
 
