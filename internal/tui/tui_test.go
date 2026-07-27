@@ -15,12 +15,14 @@ type fakeProvider struct {
 	listErr    error
 	archived   []string
 	archiveErr error
+	gotAll     bool
 	body       string
 	bodyErr    error
 	bodyIDs    []string
 }
 
-func (f *fakeProvider) ListInbox(ctx context.Context, top int) ([]mail.Message, error) {
+func (f *fakeProvider) ListInbox(ctx context.Context, top int, all bool) ([]mail.Message, error) {
+	f.gotAll = all
 	if f.listErr != nil {
 		return nil, f.listErr
 	}
@@ -56,7 +58,7 @@ func key(s string) tea.KeyMsg {
 }
 
 func TestLoadedPopulatesMessages(t *testing.T) {
-	m := New(&fakeProvider{}, 10)
+	m := New(&fakeProvider{}, 10, false)
 	m, _ = m.update(messagesLoadedMsg{sampleMessages()})
 	if m.loading {
 		t.Fatal("should not be loading after load")
@@ -67,7 +69,7 @@ func TestLoadedPopulatesMessages(t *testing.T) {
 }
 
 func TestNavigationClamps(t *testing.T) {
-	m := New(&fakeProvider{}, 10)
+	m := New(&fakeProvider{}, 10, false)
 	m, _ = m.update(messagesLoadedMsg{sampleMessages()})
 
 	// Up at top stays at 0.
@@ -95,7 +97,7 @@ func TestNavigationClamps(t *testing.T) {
 
 func TestArchiveKeyReturnsCommandAndArchivedRemoves(t *testing.T) {
 	fp := &fakeProvider{}
-	m := New(fp, 10)
+	m := New(fp, 10, false)
 	m, _ = m.update(messagesLoadedMsg{sampleMessages()})
 
 	// Pressing 'a' on the first message should return a command.
@@ -129,7 +131,7 @@ func TestArchiveKeyReturnsCommandAndArchivedRemoves(t *testing.T) {
 
 func TestArchiveErrorSurfaces(t *testing.T) {
 	fp := &fakeProvider{archiveErr: errors.New("nope")}
-	m := New(fp, 10)
+	m := New(fp, 10, false)
 	m, _ = m.update(messagesLoadedMsg{sampleMessages()})
 	_, cmd := m.update(key("a"))
 	if cmd == nil {
@@ -142,7 +144,7 @@ func TestArchiveErrorSurfaces(t *testing.T) {
 }
 
 func TestReadToggle(t *testing.T) {
-	m := New(&fakeProvider{}, 10)
+	m := New(&fakeProvider{}, 10, false)
 	m, _ = m.update(messagesLoadedMsg{sampleMessages()})
 	if m.messages[0].IsRead {
 		t.Fatal("precondition: first should be unread")
@@ -154,7 +156,7 @@ func TestReadToggle(t *testing.T) {
 }
 
 func TestQuitSetsFlag(t *testing.T) {
-	m := New(&fakeProvider{}, 10)
+	m := New(&fakeProvider{}, 10, false)
 	m, cmd := m.update(key("q"))
 	if !m.quitting {
 		t.Error("q should set quitting")
@@ -165,7 +167,7 @@ func TestQuitSetsFlag(t *testing.T) {
 }
 
 func TestLoadErrorSetsErr(t *testing.T) {
-	m := New(&fakeProvider{}, 10)
+	m := New(&fakeProvider{}, 10, false)
 	m, _ = m.update(errMsg{errors.New("boom")})
 	if m.err == nil {
 		t.Error("expected err to be set")
@@ -177,7 +179,7 @@ func TestLoadErrorSetsErr(t *testing.T) {
 
 func TestEnterOpensMessageAndLoadsBody(t *testing.T) {
 	fp := &fakeProvider{body: "hello world"}
-	m := New(fp, 10)
+	m := New(fp, 10, false)
 	m, _ = m.update(messagesLoadedMsg{sampleMessages()})
 
 	m, cmd := m.update(key("enter"))
@@ -213,7 +215,7 @@ func TestEnterOpensMessageAndLoadsBody(t *testing.T) {
 }
 
 func TestEnterOnEmptyInboxIsNoOp(t *testing.T) {
-	m := New(&fakeProvider{}, 10)
+	m := New(&fakeProvider{}, 10, false)
 	m, _ = m.update(messagesLoadedMsg{nil})
 	m, cmd := m.update(key("enter"))
 	if m.viewing {
@@ -226,7 +228,7 @@ func TestEnterOnEmptyInboxIsNoOp(t *testing.T) {
 
 func TestDetailViewKeysClose(t *testing.T) {
 	fp := &fakeProvider{body: "body text"}
-	m := New(fp, 10)
+	m := New(fp, 10, false)
 	m, _ = m.update(messagesLoadedMsg{sampleMessages()})
 	m, _ = m.update(key("enter"))
 	if !m.viewing {
@@ -247,7 +249,7 @@ func TestDetailViewKeysClose(t *testing.T) {
 
 func TestDetailViewBodyErrorSurfaces(t *testing.T) {
 	fp := &fakeProvider{bodyErr: errors.New("boom")}
-	m := New(fp, 10)
+	m := New(fp, 10, false)
 	m, _ = m.update(messagesLoadedMsg{sampleMessages()})
 	_, cmd := m.update(key("enter"))
 	if cmd == nil {
@@ -268,7 +270,7 @@ func TestDetailViewBodyErrorSurfaces(t *testing.T) {
 }
 
 func TestViewDoesNotPanic(t *testing.T) {
-	m := New(&fakeProvider{}, 10)
+	m := New(&fakeProvider{}, 10, false)
 	_ = m.View() // loading
 	m, _ = m.update(messagesLoadedMsg{sampleMessages()})
 	_ = m.View() // list
@@ -279,7 +281,7 @@ func TestViewDoesNotPanic(t *testing.T) {
 }
 
 func TestEmptyInboxSelectedNil(t *testing.T) {
-	m := New(&fakeProvider{}, 10)
+	m := New(&fakeProvider{}, 10, false)
 	m, _ = m.update(messagesLoadedMsg{nil})
 	if m.selected() != nil {
 		t.Error("selected should be nil for empty inbox")
@@ -303,7 +305,7 @@ func TestSubjectWidthTracksResize(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			m := New(&fakeProvider{}, 10)
+			m := New(&fakeProvider{}, 10, false)
 			m, _ = m.update(tea.WindowSizeMsg{Width: tt.width, Height: 24})
 			if got := m.subjectWidth(); got != tt.want {
 				t.Errorf("subjectWidth() = %d, want %d", got, tt.want)
@@ -316,7 +318,7 @@ func TestResizeShowsMoreSubject(t *testing.T) {
 	long := "This is a very long email subject line that keeps going and going"
 	msgs := []mail.Message{{ID: "1", Subject: long, From: mail.Address{Name: "Alice"}}}
 
-	m := New(&fakeProvider{}, 10)
+	m := New(&fakeProvider{}, 10, false)
 	m, _ = m.update(messagesLoadedMsg{msgs})
 
 	m, _ = m.update(tea.WindowSizeMsg{Width: 60, Height: 24})

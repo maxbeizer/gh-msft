@@ -34,8 +34,9 @@ type Message struct {
 
 // Provider reads and mutates mail.
 type Provider interface {
-	// ListInbox returns up to top recent inbox messages, newest first.
-	ListInbox(ctx context.Context, top int) ([]Message, error)
+	// ListInbox returns up to top recent messages, newest first. When all is
+	// false it reads the Inbox folder only; when true it reads all mail folders.
+	ListInbox(ctx context.Context, top int, all bool) ([]Message, error)
 	// Archive moves the message with the given id to the Archive folder.
 	Archive(ctx context.Context, id string) error
 	// Body returns the plain-text body of the message with the given id.
@@ -83,11 +84,15 @@ type graphMessageCollection struct {
 	Value []graphMessage `json:"value"`
 }
 
-func (p *WorkIQProvider) ListInbox(ctx context.Context, top int) ([]Message, error) {
+func (p *WorkIQProvider) ListInbox(ctx context.Context, top int, all bool) ([]Message, error) {
 	if top <= 0 {
 		top = 25
 	}
-	url := fmt.Sprintf("/me/messages?$select=subject,from,toRecipients,receivedDateTime,isRead&$top=%d&$orderby=receivedDateTime desc", top)
+	base := "/me/mailFolders/inbox/messages"
+	if all {
+		base = "/me/messages"
+	}
+	url := fmt.Sprintf("%s?$select=subject,from,toRecipients,receivedDateTime,isRead&$top=%d&$orderby=receivedDateTime desc", base, top)
 	results, err := p.c.Fetch(ctx, url)
 	if err != nil {
 		return nil, err

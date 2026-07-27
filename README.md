@@ -37,6 +37,7 @@ gh extension install maxbeizer/gh-msft
 
 ```bash
 gh msft mail list                 # recent inbox messages
+gh msft mail list --all           # include all mail, not just the inbox
 gh msft mail list --top 50 --json # machine-readable output
 gh msft mail archive <id>         # move a message to Archive
 gh msft mail list --json | jq -r '.[].id' | gh msft mail archive --stdin

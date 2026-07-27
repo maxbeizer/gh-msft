@@ -21,6 +21,7 @@ func newMailCmd(factory Factory) *cobra.Command {
 func newMailListCmd(factory Factory) *cobra.Command {
 	var top int
 	var asJSON bool
+	var all bool
 	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "List recent inbox messages",
@@ -32,7 +33,7 @@ func newMailListCmd(factory Factory) *cobra.Command {
 			}
 			defer cleanup()
 			sp.setMessage("Loading inbox…")
-			msgs, err := providers.Mail.ListInbox(cmd.Context(), top)
+			msgs, err := providers.Mail.ListInbox(cmd.Context(), top, all)
 			sp.stopSpinner()
 			if err != nil {
 				return fmt.Errorf("listing inbox: %w", err)
@@ -42,6 +43,7 @@ func newMailListCmd(factory Factory) *cobra.Command {
 	}
 	cmd.Flags().IntVar(&top, "top", 25, "maximum number of messages to list")
 	cmd.Flags().BoolVar(&asJSON, "json", false, "output as JSON")
+	cmd.Flags().BoolVar(&all, "all", false, "list all mail instead of only the inbox")
 	return cmd
 }
 

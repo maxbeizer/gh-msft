@@ -26,6 +26,7 @@ type errMsg struct{ err error }
 type Model struct {
 	provider mail.Provider
 	top      int
+	all      bool
 
 	messages []mail.Message
 	cursor   int
@@ -43,12 +44,13 @@ type Model struct {
 	height int
 }
 
-// New builds an inbox model for the given provider.
-func New(provider mail.Provider, top int) Model {
+// New builds an inbox model for the given provider. When all is true it loads
+// all mail instead of only the inbox.
+func New(provider mail.Provider, top int, all bool) Model {
 	if top <= 0 {
 		top = 50
 	}
-	return Model{provider: provider, top: top, loading: true}
+	return Model{provider: provider, top: top, all: all, loading: true}
 }
 
 // Init kicks off the initial inbox load.
@@ -57,9 +59,9 @@ func (m Model) Init() tea.Cmd {
 }
 
 func (m Model) loadCmd() tea.Cmd {
-	provider, top := m.provider, m.top
+	provider, top, all := m.provider, m.top, m.all
 	return func() tea.Msg {
-		msgs, err := provider.ListInbox(context.Background(), top)
+		msgs, err := provider.ListInbox(context.Background(), top, all)
 		if err != nil {
 			return errMsg{err}
 		}
@@ -247,6 +249,9 @@ func (m Model) View() string {
 		return fmt.Sprintf("Error: %v\n\nPress q to quit.\n", m.err)
 	}
 	if m.loading {
+		if m.all {
+			return "Loading all mail…\n"
+		}
 		return "Loading inbox…\n"
 	}
 	if m.viewing {
@@ -385,8 +390,8 @@ func truncate(s string, n int) string {
 }
 
 // Run starts the interactive inbox program against the given provider.
-func Run(provider mail.Provider, top int) error {
-	p := tea.NewProgram(New(provider, top))
+func Run(provider mail.Provider, top int, all bool) error {
+	p := tea.NewProgram(New(provider, top, all))
 	_, err := p.Run()
 	return err
 }
