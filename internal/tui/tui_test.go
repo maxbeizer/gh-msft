@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -287,5 +288,46 @@ func TestEmptyInboxSelectedNil(t *testing.T) {
 	_, cmd := m.update(key("a"))
 	if cmd != nil {
 		t.Error("archive on empty inbox should be no-op")
+	}
+}
+
+func TestSubjectWidthTracksResize(t *testing.T) {
+	tests := []struct {
+		name  string
+		width int
+		want  int
+	}{
+		{"unset falls back", 0, 50},
+		{"narrow clamps to min", 20, 10},
+		{"wide grows", 120, 93},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := New(&fakeProvider{}, 10)
+			m, _ = m.update(tea.WindowSizeMsg{Width: tt.width, Height: 24})
+			if got := m.subjectWidth(); got != tt.want {
+				t.Errorf("subjectWidth() = %d, want %d", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestResizeShowsMoreSubject(t *testing.T) {
+	long := "This is a very long email subject line that keeps going and going"
+	msgs := []mail.Message{{ID: "1", Subject: long, From: mail.Address{Name: "Alice"}}}
+
+	m := New(&fakeProvider{}, 10)
+	m, _ = m.update(messagesLoadedMsg{msgs})
+
+	m, _ = m.update(tea.WindowSizeMsg{Width: 60, Height: 24})
+	narrow := m.View()
+	m, _ = m.update(tea.WindowSizeMsg{Width: 200, Height: 24})
+	wide := m.View()
+
+	if len(wide) <= len(narrow) {
+		t.Errorf("wide view (%d) should render more than narrow (%d)", len(wide), len(narrow))
+	}
+	if !strings.Contains(wide, long) {
+		t.Error("wide view should show the full subject")
 	}
 }

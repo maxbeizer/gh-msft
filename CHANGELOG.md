@@ -9,7 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org).
 
 ### Added
 
-- Initial release
+- `gh msft accept-eula` command to accept the WorkIQ End User License Agreement
+  from the extension. WorkIQ tool errors caused by an unaccepted EULA now hint at
+  running it.
+
+### Fixed
+
+- TUI inbox now adapts email subject width to the terminal on resize, showing
+  more or less of the title, and clears the screen on resize to avoid artifacts.
+
+## [0.1.0] - 2026-07-23
+
+### Added
+
 - WorkIQ-backed Microsoft 365 access (no credentials stored by this tool):
   - `internal/workiq` MCP stdio client for the WorkIQ Graph proxy (`fetch` / `do_action`).
   - `MailProvider` and `CalendarProvider` interfaces with WorkIQ-backed implementations.

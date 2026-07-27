@@ -3,6 +3,7 @@ package workiq
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"strings"
 	"testing"
@@ -299,5 +300,63 @@ func TestFetchRequiresURL(t *testing.T) {
 	}
 	if _, err := c.Fetch(ctx); err == nil {
 		t.Fatal("expected error when no entity URLs provided")
+	}
+}
+
+func TestAcceptEULACommand(t *testing.T) {
+	tests := []struct {
+		name     string
+		env      map[string]string
+		wantName string
+		wantArgs []string
+	}{
+		{
+			name:     "default npx",
+			env:      map[string]string{},
+			wantName: "npx",
+			wantArgs: []string{"-y", "@microsoft/workiq@latest", "accept-eula"},
+		},
+		{
+			name:     "WORKIQ_BIN override",
+			env:      map[string]string{"WORKIQ_BIN": "/opt/workiq"},
+			wantName: "/opt/workiq",
+			wantArgs: []string{"accept-eula"},
+		},
+		{
+			name:     "WORKIQ_MCP_COMMAND is ignored",
+			env:      map[string]string{"WORKIQ_MCP_COMMAND": "workiq mcp"},
+			wantName: "npx",
+			wantArgs: []string{"-y", "@microsoft/workiq@latest", "accept-eula"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			env := func(k string) string { return tt.env[k] }
+			name, args := acceptEULACommand(env)
+			if name != tt.wantName {
+				t.Errorf("name = %q, want %q", name, tt.wantName)
+			}
+			if strings.Join(args, " ") != strings.Join(tt.wantArgs, " ") {
+				t.Errorf("args = %v, want %v", args, tt.wantArgs)
+			}
+		})
+	}
+}
+
+func TestFetchEULAErrorIsSentinel(t *testing.T) {
+	handle := func(name string, args json.RawMessage) (toolResult, *rpcError) {
+		res := textResult("You must accept the EULA before using this tool. Please use the accept_eula tool to continue.")
+		res.IsError = true
+		return res, nil
+	}
+	w, r := startFakeServer(t, handle)
+	ctx := context.Background()
+	c, err := newWithPipes(ctx, w, r)
+	if err != nil {
+		t.Fatalf("newWithPipes: %v", err)
+	}
+	_, err = c.Fetch(ctx, "/me/messages")
+	if !errors.Is(err, ErrEULANotAccepted) {
+		t.Fatalf("expected ErrEULANotAccepted, got %v", err)
 	}
 }
