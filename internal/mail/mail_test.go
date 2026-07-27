@@ -158,6 +158,43 @@ func TestArchiveRequiresID(t *testing.T) {
 	}
 }
 
+func TestBodyHTMLBecomesPlainText(t *testing.T) {
+	fg := &fakeGraph{fetchData: `{"body":{"contentType":"html","content":"<html><body><p>Hi&nbsp;there</p><br><div>Line two</div></body></html>"}}`}
+	p := NewWorkIQProvider(fg)
+	body, err := p.Body(context.Background(), "AAA1")
+	if err != nil {
+		t.Fatalf("Body: %v", err)
+	}
+	if contains(body, "<") {
+		t.Errorf("body still has tags: %q", body)
+	}
+	if !contains(body, "Hi") || !contains(body, "Line two") {
+		t.Errorf("body missing text: %q", body)
+	}
+	if len(fg.gotFetchURLs) != 1 || !contains(fg.gotFetchURLs[0], "/me/messages/AAA1") {
+		t.Errorf("fetch url = %v", fg.gotFetchURLs)
+	}
+}
+
+func TestBodyTextPassesThrough(t *testing.T) {
+	fg := &fakeGraph{fetchData: `{"body":{"contentType":"text","content":"plain body"}}`}
+	p := NewWorkIQProvider(fg)
+	body, err := p.Body(context.Background(), "AAA1")
+	if err != nil {
+		t.Fatalf("Body: %v", err)
+	}
+	if body != "plain body" {
+		t.Errorf("body = %q, want %q", body, "plain body")
+	}
+}
+
+func TestBodyRequiresID(t *testing.T) {
+	p := NewWorkIQProvider(&fakeGraph{})
+	if _, err := p.Body(context.Background(), ""); err == nil {
+		t.Fatal("expected error for empty id")
+	}
+}
+
 func TestArchivePropagatesError(t *testing.T) {
 	fg := &fakeGraph{doActionErr: errors.New("nope")}
 	p := NewWorkIQProvider(fg)

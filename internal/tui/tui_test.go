@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -15,6 +16,9 @@ type fakeProvider struct {
 	archived   []string
 	archiveErr error
 	gotAll     bool
+	body       string
+	bodyErr    error
+	bodyIDs    []string
 }
 
 func (f *fakeProvider) ListInbox(ctx context.Context, top int, all bool) ([]mail.Message, error) {
@@ -31,6 +35,14 @@ func (f *fakeProvider) Archive(ctx context.Context, id string) error {
 	}
 	f.archived = append(f.archived, id)
 	return nil
+}
+
+func (f *fakeProvider) Body(ctx context.Context, id string) (string, error) {
+	f.bodyIDs = append(f.bodyIDs, id)
+	if f.bodyErr != nil {
+		return "", f.bodyErr
+	}
+	return f.body, nil
 }
 
 func sampleMessages() []mail.Message {
@@ -165,6 +177,98 @@ func TestLoadErrorSetsErr(t *testing.T) {
 	}
 }
 
+func TestEnterOpensMessageAndLoadsBody(t *testing.T) {
+	fp := &fakeProvider{body: "hello world"}
+	m := New(fp, 10, false)
+	m, _ = m.update(messagesLoadedMsg{sampleMessages()})
+
+	m, cmd := m.update(key("enter"))
+	if !m.viewing {
+		t.Fatal("enter should open the detail view")
+	}
+	if !m.bodyLoading {
+		t.Fatal("enter should mark body as loading")
+	}
+	if cmd == nil {
+		t.Fatal("enter should return a body command")
+	}
+
+	res := cmd()
+	bm, ok := res.(bodyLoadedMsg)
+	if !ok {
+		t.Fatalf("expected bodyLoadedMsg, got %T", res)
+	}
+	if bm.id != "1" || bm.body != "hello world" {
+		t.Errorf("bodyLoadedMsg = %+v", bm)
+	}
+	if len(fp.bodyIDs) != 1 || fp.bodyIDs[0] != "1" {
+		t.Errorf("provider body ids = %v", fp.bodyIDs)
+	}
+
+	m, _ = m.update(bm)
+	if m.bodyLoading {
+		t.Error("body should no longer be loading")
+	}
+	if m.body != "hello world" {
+		t.Errorf("body = %q", m.body)
+	}
+}
+
+func TestEnterOnEmptyInboxIsNoOp(t *testing.T) {
+	m := New(&fakeProvider{}, 10, false)
+	m, _ = m.update(messagesLoadedMsg{nil})
+	m, cmd := m.update(key("enter"))
+	if m.viewing {
+		t.Error("enter on empty inbox should not open detail view")
+	}
+	if cmd != nil {
+		t.Error("enter on empty inbox should be a no-op")
+	}
+}
+
+func TestDetailViewKeysClose(t *testing.T) {
+	fp := &fakeProvider{body: "body text"}
+	m := New(fp, 10, false)
+	m, _ = m.update(messagesLoadedMsg{sampleMessages()})
+	m, _ = m.update(key("enter"))
+	if !m.viewing {
+		t.Fatal("precondition: should be viewing")
+	}
+
+	m, cmd := m.update(tea.KeyMsg{Type: tea.KeyEsc})
+	if m.viewing {
+		t.Error("esc should close the detail view")
+	}
+	if m.quitting {
+		t.Error("esc should not quit the program")
+	}
+	if cmd != nil {
+		t.Error("esc should not return a command")
+	}
+}
+
+func TestDetailViewBodyErrorSurfaces(t *testing.T) {
+	fp := &fakeProvider{bodyErr: errors.New("boom")}
+	m := New(fp, 10, false)
+	m, _ = m.update(messagesLoadedMsg{sampleMessages()})
+	_, cmd := m.update(key("enter"))
+	if cmd == nil {
+		t.Fatal("expected body command")
+	}
+	res := cmd()
+	em, ok := res.(errMsg)
+	if !ok {
+		t.Fatalf("expected errMsg, got %T", res)
+	}
+	m2, _ := m.update(em)
+	if m2.viewing {
+		t.Error("body error should close the detail view")
+	}
+	if m2.err == nil {
+		t.Error("body error should set err")
+	}
+}
+
 func TestViewDoesNotPanic(t *testing.T) {
 	m := New(&fakeProvider{}, 10, false)
 	_ = m.View() // loading
@@ -186,5 +290,46 @@ func TestEmptyInboxSelectedNil(t *testing.T) {
 	_, cmd := m.update(key("a"))
 	if cmd != nil {
 		t.Error("archive on empty inbox should be no-op")
+	}
+}
+
+func TestSubjectWidthTracksResize(t *testing.T) {
+	tests := []struct {
+		name  string
+		width int
+		want  int
+	}{
+		{"unset falls back", 0, 50},
+		{"narrow clamps to min", 20, 10},
+		{"wide grows", 120, 93},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := New(&fakeProvider{}, 10, false)
+			m, _ = m.update(tea.WindowSizeMsg{Width: tt.width, Height: 24})
+			if got := m.subjectWidth(); got != tt.want {
+				t.Errorf("subjectWidth() = %d, want %d", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestResizeShowsMoreSubject(t *testing.T) {
+	long := "This is a very long email subject line that keeps going and going"
+	msgs := []mail.Message{{ID: "1", Subject: long, From: mail.Address{Name: "Alice"}}}
+
+	m := New(&fakeProvider{}, 10, false)
+	m, _ = m.update(messagesLoadedMsg{msgs})
+
+	m, _ = m.update(tea.WindowSizeMsg{Width: 60, Height: 24})
+	narrow := m.View()
+	m, _ = m.update(tea.WindowSizeMsg{Width: 200, Height: 24})
+	wide := m.View()
+
+	if len(wide) <= len(narrow) {
+		t.Errorf("wide view (%d) should render more than narrow (%d)", len(wide), len(narrow))
+	}
+	if !strings.Contains(wide, long) {
+		t.Error("wide view should show the full subject")
 	}
 }

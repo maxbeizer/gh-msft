@@ -15,6 +15,10 @@ import (
 
 // Message types exchanged with the Bubble Tea runtime.
 type messagesLoadedMsg struct{ messages []mail.Message }
+type bodyLoadedMsg struct {
+	id   string
+	body string
+}
 type archivedMsg struct{ id string }
 type errMsg struct{ err error }
 
@@ -31,6 +35,10 @@ type Model struct {
 	status   string
 	showHelp bool
 	quitting bool
+
+	viewing     bool
+	body        string
+	bodyLoading bool
 
 	width  int
 	height int
@@ -70,6 +78,16 @@ func archiveCmd(provider mail.Provider, id string) tea.Cmd {
 	}
 }
 
+func bodyCmd(provider mail.Provider, id string) tea.Cmd {
+	return func() tea.Msg {
+		body, err := provider.Body(context.Background(), id)
+		if err != nil {
+			return errMsg{err}
+		}
+		return bodyLoadedMsg{id: id, body: body}
+	}
+}
+
 // Update satisfies tea.Model. The concrete-typed update method below carries the
 // real logic so it can be unit-tested without interface boxing.
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -83,7 +101,7 @@ func (m Model) update(msg tea.Msg) (Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
-		return m, nil
+		return m, tea.ClearScreen
 
 	case messagesLoadedMsg:
 		m.messages = msg.messages
@@ -92,9 +110,16 @@ func (m Model) update(msg tea.Msg) (Model, tea.Cmd) {
 		m.clampCursor()
 		return m, nil
 
+	case bodyLoadedMsg:
+		m.body = msg.body
+		m.bodyLoading = false
+		return m, nil
+
 	case errMsg:
 		m.err = msg.err
 		m.loading = false
+		m.bodyLoading = false
+		m.viewing = false
 		return m, nil
 
 	case archivedMsg:
@@ -109,6 +134,19 @@ func (m Model) update(msg tea.Msg) (Model, tea.Cmd) {
 }
 
 func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd) {
+	if m.viewing {
+		switch msg.String() {
+		case "ctrl+c":
+			m.quitting = true
+			return m, tea.Quit
+		case "esc", "enter", "q", "backspace":
+			m.viewing = false
+			m.body = ""
+			m.bodyLoading = false
+			return m, nil
+		}
+		return m, nil
+	}
 	switch msg.String() {
 	case "ctrl+c", "q":
 		m.quitting = true
@@ -116,6 +154,16 @@ func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 	case "?":
 		m.showHelp = !m.showHelp
 		return m, nil
+	case "enter":
+		sel := m.selected()
+		if sel == nil {
+			return m, nil
+		}
+		m.viewing = true
+		m.bodyLoading = true
+		m.body = ""
+		m.status = ""
+		return m, bodyCmd(m.provider, sel.ID)
 	case "j", "down":
 		m.moveCursor(1)
 		return m, nil
@@ -206,6 +254,9 @@ func (m Model) View() string {
 		}
 		return "Loading inbox…\n"
 	}
+	if m.viewing {
+		return m.detailView()
+	}
 
 	var b strings.Builder
 	b.WriteString(titleStyle.Render(fmt.Sprintf("Inbox (%d)", len(m.messages))))
@@ -227,7 +278,7 @@ func (m Model) View() string {
 		if from == "" {
 			from = msg.From.Email
 		}
-		line := fmt.Sprintf("%s%s %-22s %s", cursor, marker, truncate(from, 22), truncate(msg.Subject, 50))
+		line := fmt.Sprintf("%s%s %-22s %s", cursor, marker, truncate(from, 22), truncate(msg.Subject, m.subjectWidth()))
 		switch {
 		case i == m.cursor:
 			line = selectedStyle.Render(line)
@@ -244,12 +295,87 @@ func (m Model) View() string {
 		b.WriteString("\n")
 	}
 	if m.showHelp {
-		b.WriteString(helpStyle.Render("j/k move · a archive · r toggle read · R refresh · g/G top/bottom · ? help · q quit"))
+		b.WriteString(helpStyle.Render("j/k move · enter open · a archive · r toggle read · R refresh · g/G top/bottom · ? help · q quit"))
 	} else {
-		b.WriteString(helpStyle.Render("? help · q quit"))
+		b.WriteString(helpStyle.Render("enter open · ? help · q quit"))
 	}
 	b.WriteString("\n")
 	return b.String()
+}
+
+// detailView renders the body of the selected message.
+func (m Model) detailView() string {
+	sel := m.selected()
+	if sel == nil {
+		return "No message.\n\nPress esc to go back.\n"
+	}
+
+	var b strings.Builder
+	width := m.width
+	if width <= 0 {
+		width = 80
+	}
+	b.WriteString(titleStyle.Render(lipgloss.NewStyle().Width(width).Render(sel.Subject)))
+	b.WriteString("\n\n")
+	if !sel.Received.IsZero() {
+		b.WriteString(helpStyle.Render("Received: " + sel.Received.Time.Local().Format("Jan 02 15:04")))
+		b.WriteString("\n")
+	}
+	b.WriteString(helpStyle.Width(width).Render("From: " + formatAddr(sel.From)))
+	b.WriteString("\n")
+	b.WriteString(helpStyle.Width(width).Render("To: " + formatAddrs(sel.To)))
+	b.WriteString("\n")
+	b.WriteString("\n")
+	switch {
+	case m.bodyLoading:
+		b.WriteString("Loading message…\n")
+	case m.body == "":
+		b.WriteString("(empty message)\n")
+	default:
+		b.WriteString(lipgloss.NewStyle().Width(width).Render(m.body))
+		b.WriteString("\n")
+	}
+	b.WriteString("\n")
+	b.WriteString(helpStyle.Render("esc/enter back · ctrl+c quit"))
+	b.WriteString("\n")
+	return b.String()
+}
+
+func formatAddr(a mail.Address) string {
+	switch {
+	case a.Name != "" && a.Email != "":
+		return fmt.Sprintf("%s <%s>", a.Name, a.Email)
+	case a.Email != "":
+		return a.Email
+	default:
+		return a.Name
+	}
+}
+
+func formatAddrs(as []mail.Address) string {
+	if len(as) == 0 {
+		return "-"
+	}
+	parts := make([]string, len(as))
+	for i, a := range as {
+		parts[i] = formatAddr(a)
+	}
+	return strings.Join(parts, ", ")
+}
+
+// subjectWidth returns how many columns the subject may use, derived from the
+// terminal width so a resize shows more or less of the title. The fixed prefix
+// (cursor, marker, from column, and separating spaces) is 27 columns.
+func (m Model) subjectWidth() int {
+	const prefix = 27
+	if m.width <= 0 {
+		return 50
+	}
+	w := m.width - prefix
+	if w < 10 {
+		w = 10
+	}
+	return w
 }
 
 func truncate(s string, n int) string {

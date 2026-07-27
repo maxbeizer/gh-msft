@@ -18,8 +18,9 @@ system's Microsoft SSO broker — owns authentication for your signed-in Microso
 ### Prerequisites
 
 - [Node.js](https://nodejs.org/) (provides `npx`).
-- WorkIQ set up and consented once: `npx -y @microsoft/workiq accept-eula`
-  (admin consent may be required on your tenant — see the WorkIQ docs).
+- WorkIQ set up and consented once. Accept the EULA with `gh msft accept-eula`
+  (or `npx -y @microsoft/workiq accept-eula`); admin consent may be required on
+  your tenant — see the WorkIQ docs.
 
 By default `gh-msft` launches `npx -y @microsoft/workiq@latest mcp`. Override with:
 
@@ -42,6 +43,7 @@ gh msft mail archive <id>         # move a message to Archive
 gh msft mail list --json | jq -r '.[].id' | gh msft mail archive --stdin
 gh msft cal                       # upcoming calendar events
 gh msft cal --json                # machine-readable output
+gh msft accept-eula               # accept the WorkIQ EULA (run once)
 gh msft tui                       # interactive inbox
 ```
 
@@ -51,6 +53,8 @@ gh msft tui                       # interactive inbox
 | ---------- | ------------------------------- |
 | `j` / `k`  | move down / up (also arrows)    |
 | `g` / `G`  | jump to top / bottom            |
+| `enter`    | open selected message           |
+| `esc`      | close open message              |
 | `a`        | archive selected message        |
 | `r`        | toggle read state (visual only) |
 | `R`        | refresh inbox                   |
