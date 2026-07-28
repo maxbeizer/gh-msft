@@ -5,6 +5,7 @@
 EXTENSION_NAME ?= msft
 
 BINARY ?= bin/gh-$(EXTENSION_NAME)
+LOCAL_EXTENSION_DIR ?= .gh-extension-local/gh-$(EXTENSION_NAME)
 GO ?= go
 GO_MIN_MAJOR ?= 1
 GO_MIN_MINOR ?= 24
@@ -33,7 +34,7 @@ help:
 	@echo ""
 	@echo "  make build          Build ./$(BINARY)"
 	@echo "  make run            Build and run locally"
-	@echo "  make install-local  Install extension from current checkout"
+	@echo "  make install-local  Build and install extension from current checkout"
 	@echo "  make relink-local   Reinstall local extension link"
 	@echo "  make test           Run unit tests"
 	@echo "  make test-race      Run tests with race + coverage.out"
@@ -51,15 +52,24 @@ build: check-go-version
 run: build
 	./$(BINARY)
 
-install-local:
-	gh extension install .
+install-local: build
+	@mkdir -p $(dir $(LOCAL_EXTENSION_DIR))
+	@rm -rf $(LOCAL_EXTENSION_DIR)
+	@mkdir -p $(LOCAL_EXTENSION_DIR)
+	$(GO) build -o gh-$(EXTENSION_NAME) .
+	@cp gh-$(EXTENSION_NAME) $(LOCAL_EXTENSION_DIR)/gh-$(EXTENSION_NAME)
+	cd $(LOCAL_EXTENSION_DIR) && gh extension install .
 
 relink-local: build
 	@if gh extension list | grep -qE '^gh $(EXTENSION_NAME)[[:space:]]'; then \
 		gh extension remove $(EXTENSION_NAME); \
 	fi
+	@mkdir -p $(dir $(LOCAL_EXTENSION_DIR))
+	@rm -rf $(LOCAL_EXTENSION_DIR)
+	@mkdir -p $(LOCAL_EXTENSION_DIR)
 	$(GO) build -o gh-$(EXTENSION_NAME) .
-	gh extension install .
+	@cp gh-$(EXTENSION_NAME) $(LOCAL_EXTENSION_DIR)/gh-$(EXTENSION_NAME)
+	cd $(LOCAL_EXTENSION_DIR) && gh extension install .
 
 test: check-go-version
 	$(GO) test ./...
@@ -87,4 +97,4 @@ tidy: check-go-version
 	$(GO) mod tidy
 
 clean:
-	rm -rf bin coverage.out gh-$(EXTENSION_NAME)
+	rm -rf bin coverage.out gh-$(EXTENSION_NAME) .gh-extension-local

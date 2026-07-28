@@ -11,6 +11,7 @@
 # Built extension binaries
 /bin/
 /gh-msft
+/.gh-extension-local/
 
 # Test binary, built with `go test -c`
 *.test
