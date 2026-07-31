@@ -76,12 +76,14 @@ func RunBroker(ctx context.Context) error {
 		return err
 	}
 	lockPath := filepath.Join(dir, "broker.lock")
-	instanceID := ""
-	defer func() {
-		if instanceID == "" {
-			_ = os.Remove(lockPath)
-			return
+	instanceID := strings.TrimSpace(os.Getenv("WORKIQ_BROKER_ID"))
+	if instanceID == "" {
+		instanceID, err = newBrokerToken()
+		if err != nil {
+			return err
 		}
+	}
+	defer func() {
 		removeOwnedFile(lockPath, instanceID)
 	}()
 
@@ -91,10 +93,6 @@ func RunBroker(ctx context.Context) error {
 		return err
 	}
 	defer c.Close()
-	instanceID, err = newBrokerToken()
-	if err != nil {
-		return err
-	}
 	if err := os.WriteFile(lockPath, []byte(instanceID), 0600); err != nil {
 		return fmt.Errorf("workiq broker: identify lock: %w", err)
 	}
@@ -254,6 +252,17 @@ func startBroker() error {
 	if err != nil {
 		return err
 	}
+	instanceID, err := newBrokerToken()
+	if err != nil {
+		_ = lock.Close()
+		_ = os.Remove(lock.Name())
+		return err
+	}
+	if _, err := lock.WriteString(instanceID); err != nil {
+		_ = lock.Close()
+		_ = os.Remove(lock.Name())
+		return fmt.Errorf("workiq broker: identify lock: %w", err)
+	}
 	_ = lock.Close()
 	_ = os.Remove(brokerStatePath())
 	executable, err := os.Executable()
@@ -262,7 +271,7 @@ func startBroker() error {
 		return fmt.Errorf("workiq broker: locate executable: %w", err)
 	}
 	cmd := exec.Command(executable, "__broker")
-	cmd.Env = append(os.Environ(), "WORKIQ_BROKER_CHILD=1")
+	cmd.Env = append(os.Environ(), "WORKIQ_BROKER_CHILD=1", "WORKIQ_BROKER_ID="+instanceID)
 	cmd.Stdin = nil
 	cmd.Stdout = nil
 	cmd.Stderr = nil
@@ -366,7 +375,7 @@ func handleBrokerConnection(ctx context.Context, conn net.Conn, token string, gr
 		response.Results = results
 		if err != nil {
 			response.Error = err.Error()
-			timedOut = errors.Is(err, context.DeadlineExceeded)
+			timedOut = errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled)
 		}
 	case request.Method == "do_action":
 		var body any
@@ -384,7 +393,7 @@ func handleBrokerConnection(ctx context.Context, conn net.Conn, token string, gr
 		response.Data = data
 		if err != nil {
 			response.Error = err.Error()
-			timedOut = errors.Is(err, context.DeadlineExceeded)
+			timedOut = errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled)
 		}
 	default:
 		response.Error = "workiq broker: unknown method"
