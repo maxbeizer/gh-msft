@@ -175,8 +175,8 @@ func TestBrokerCallCancelsAfterConnecting(t *testing.T) {
 	cancel()
 	select {
 	case err := <-result:
-		if !errors.Is(err, errBrokerUnavailable) {
-			t.Fatalf("callOnce error = %v, want unavailable error", err)
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("callOnce error = %v, want context canceled", err)
 		}
 	case <-time.After(time.Second):
 		t.Fatal("callOnce did not stop after context cancellation")

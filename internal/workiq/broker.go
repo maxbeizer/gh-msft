@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"os/exec"
@@ -17,9 +18,12 @@ import (
 )
 
 const (
-	brokerAddress = "127.0.0.1"
-	brokerTimeout = 60 * time.Second
-	brokerVersion = "1"
+	brokerAddress              = "127.0.0.1"
+	brokerTimeout              = 60 * time.Second
+	brokerVersion              = "1"
+	maxBrokerConnections       = 64
+	maxBrokerRequestSize       = 1 << 20
+	unauthenticatedReadTimeout = 10 * time.Second
 )
 
 var errBrokerUnavailable = errors.New("workiq broker unavailable")
@@ -29,7 +33,12 @@ type brokerState struct {
 	Token   string `json:"token"`
 	PID     int    `json:"pid"`
 	Version string `json:"version"`
+	Error   string `json:"error,omitempty"`
 }
+
+type brokerStartupError struct{ message string }
+
+func (e *brokerStartupError) Error() string { return "workiq broker startup: " + e.message }
 
 type brokerRequest struct {
 	Token      string          `json:"token"`
@@ -68,6 +77,12 @@ func RunBroker(ctx context.Context) error {
 	lockPath := filepath.Join(dir, "broker.lock")
 	defer os.Remove(lockPath)
 
+	c, err := newDirect(ctx)
+	if err != nil {
+		_ = writeBrokerState(brokerState{Version: brokerVersion, Error: err.Error()})
+		return err
+	}
+	defer c.Close()
 	listener, err := net.Listen("tcp4", net.JoinHostPort(brokerAddress, "0"))
 	if err != nil {
 		return fmt.Errorf("workiq broker: listen: %w", err)
@@ -86,12 +101,6 @@ func RunBroker(ctx context.Context) error {
 		return err
 	}
 	defer os.Remove(brokerStatePath())
-
-	c, err := newDirect(ctx)
-	if err != nil {
-		return err
-	}
-	defer c.Close()
 	return serveBroker(ctx, listener, token, c)
 }
 
@@ -105,7 +114,7 @@ func newBrokerClient(ctx context.Context) (*Client, error) {
 
 func (c *brokerClient) fetch(ctx context.Context, entityURLs []string) ([]FetchResult, error) {
 	var response brokerResponse
-	if err := c.call(ctx, brokerRequest{Method: "fetch", EntityURLs: entityURLs}, &response); err != nil {
+	if err := c.call(ctx, brokerRequest{Method: "fetch", EntityURLs: entityURLs}, &response, true); err != nil {
 		return nil, err
 	}
 	return response.Results, nil
@@ -117,15 +126,18 @@ func (c *brokerClient) doAction(ctx context.Context, actionURL string, body any)
 		return nil, fmt.Errorf("workiq broker: encode action: %w", err)
 	}
 	var response brokerResponse
-	if err := c.call(ctx, brokerRequest{Method: "do_action", ActionURL: actionURL, JSONBody: raw}, &response); err != nil {
+	if err := c.call(ctx, brokerRequest{Method: "do_action", ActionURL: actionURL, JSONBody: raw}, &response, false); err != nil {
 		return nil, err
 	}
 	return response.Data, nil
 }
 
-func (c *brokerClient) call(ctx context.Context, request brokerRequest, response *brokerResponse) error {
+func (c *brokerClient) call(ctx context.Context, request brokerRequest, response *brokerResponse, retry bool) error {
 	err := c.callOnce(ctx, c.currentState(), request, response)
-	if !errors.Is(err, errBrokerUnavailable) {
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	if !retry || !errors.Is(err, errBrokerUnavailable) {
 		return err
 	}
 	state, restartErr := awaitBroker(ctx)
@@ -165,9 +177,15 @@ func (c *brokerClient) callOnce(ctx context.Context, state brokerState, request 
 		return fmt.Errorf("workiq broker: set deadline: %w", err)
 	}
 	if err := json.NewEncoder(conn).Encode(request); err != nil {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
 		return fmt.Errorf("%w: write request: %v", errBrokerUnavailable, err)
 	}
 	if err := json.NewDecoder(conn).Decode(response); err != nil {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
 		return fmt.Errorf("%w: read response: %v", errBrokerUnavailable, err)
 	}
 	if response.Error != "" {
@@ -185,8 +203,16 @@ func awaitBroker(ctx context.Context) (brokerState, error) {
 		deadline = d
 	}
 	for {
-		if state, err := readBrokerState(); err == nil && brokerHealthy(ctx, state) {
-			return state, nil
+		if state, err := readBrokerState(); err == nil {
+			if brokerHealthy(ctx, state) {
+				return state, nil
+			}
+		} else {
+			var startupErr *brokerStartupError
+			if errors.As(err, &startupErr) {
+				_ = os.Remove(brokerStatePath())
+				return brokerState{}, startupErr
+			}
 		}
 		recoverStaleBrokerLock()
 		if err := startBroker(); err != nil && !errors.Is(err, os.ErrExist) {
@@ -213,6 +239,7 @@ func startBroker() error {
 		return err
 	}
 	_ = lock.Close()
+	_ = os.Remove(brokerStatePath())
 	executable, err := os.Executable()
 	if err != nil {
 		_ = os.Remove(lock.Name())
@@ -253,6 +280,11 @@ func serveBroker(ctx context.Context, listener net.Listener, token string, graph
 			return fmt.Errorf("workiq broker: accept: %w", err)
 		}
 		connectionsMu.Lock()
+		if len(connections) >= maxBrokerConnections {
+			connectionsMu.Unlock()
+			_ = conn.Close()
+			continue
+		}
 		connections[conn] = struct{}{}
 		connectionsMu.Unlock()
 		if ctx.Err() != nil {
@@ -267,31 +299,39 @@ func serveBroker(ctx context.Context, listener net.Listener, token string, graph
 				delete(connections, conn)
 				connectionsMu.Unlock()
 			}()
-			handleBrokerConnection(ctx, conn, token, graph)
+			if handleBrokerConnection(ctx, conn, token, graph) {
+				// A timed-out stdio request may still hold the transport mutex.
+				// Retire this broker so the next command starts a clean WorkIQ child.
+				_ = listener.Close()
+			}
 		}()
 	}
 }
 
-func handleBrokerConnection(ctx context.Context, conn net.Conn, token string, graph brokerGraph) {
-	if err := conn.SetReadDeadline(time.Now().Add(brokerTimeout)); err != nil {
-		return
+func handleBrokerConnection(ctx context.Context, conn net.Conn, token string, graph brokerGraph) bool {
+	if err := conn.SetReadDeadline(time.Now().Add(unauthenticatedReadTimeout)); err != nil {
+		return false
 	}
 	var request brokerRequest
-	if err := json.NewDecoder(conn).Decode(&request); err != nil {
-		return
+	if err := json.NewDecoder(io.LimitReader(conn, maxBrokerRequestSize)).Decode(&request); err != nil {
+		return false
 	}
 	if err := conn.SetReadDeadline(time.Time{}); err != nil {
-		return
+		return false
 	}
 	response := brokerResponse{}
+	timedOut := false
 	switch {
 	case request.Token != token:
 		response.Error = "workiq broker: unauthorized request"
 	case request.Method == "fetch":
-		results, err := graph.Fetch(ctx, request.EntityURLs...)
+		requestCtx, cancel := context.WithTimeout(ctx, brokerTimeout)
+		results, err := graph.Fetch(requestCtx, request.EntityURLs...)
+		cancel()
 		response.Results = results
 		if err != nil {
 			response.Error = err.Error()
+			timedOut = errors.Is(err, context.DeadlineExceeded)
 		}
 	case request.Method == "do_action":
 		var body any
@@ -301,15 +341,19 @@ func handleBrokerConnection(ctx context.Context, conn net.Conn, token string, gr
 				break
 			}
 		}
-		data, err := graph.DoAction(ctx, request.ActionURL, body)
+		requestCtx, cancel := context.WithTimeout(ctx, brokerTimeout)
+		data, err := graph.DoAction(requestCtx, request.ActionURL, body)
+		cancel()
 		response.Data = data
 		if err != nil {
 			response.Error = err.Error()
+			timedOut = errors.Is(err, context.DeadlineExceeded)
 		}
 	default:
 		response.Error = "workiq broker: unknown method"
 	}
 	_ = json.NewEncoder(conn).Encode(response)
+	return timedOut
 }
 
 func brokerDir() (string, error) {
@@ -376,6 +420,9 @@ func readBrokerState() (brokerState, error) {
 	if err := json.Unmarshal(data, &state); err != nil {
 		return brokerState{}, err
 	}
+	if state.Error != "" {
+		return brokerState{}, &brokerStartupError{message: state.Error}
+	}
 	if state.Address == "" || state.Token == "" || state.PID < 1 || state.Version != brokerVersion {
 		return brokerState{}, errors.New("invalid broker state")
 	}
@@ -399,7 +446,6 @@ func brokerHealthy(ctx context.Context, state brokerState) bool {
 	defer cancel()
 	conn, err := (&net.Dialer{}).DialContext(checkCtx, "tcp", state.Address)
 	if err != nil {
-		_ = os.Remove(brokerStatePath())
 		return false
 	}
 	_ = conn.Close()
