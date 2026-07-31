@@ -33,6 +33,7 @@ type brokerState struct {
 	Token   string `json:"token"`
 	PID     int    `json:"pid"`
 	Version string `json:"version"`
+	ID      string `json:"id"`
 	Error   string `json:"error,omitempty"`
 }
 
@@ -75,7 +76,14 @@ func RunBroker(ctx context.Context) error {
 		return err
 	}
 	lockPath := filepath.Join(dir, "broker.lock")
-	defer os.Remove(lockPath)
+	instanceID := ""
+	defer func() {
+		if instanceID == "" {
+			_ = os.Remove(lockPath)
+			return
+		}
+		removeOwnedFile(lockPath, instanceID)
+	}()
 
 	c, err := newDirect(ctx)
 	if err != nil {
@@ -83,6 +91,13 @@ func RunBroker(ctx context.Context) error {
 		return err
 	}
 	defer c.Close()
+	instanceID, err = newBrokerToken()
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(lockPath, []byte(instanceID), 0600); err != nil {
+		return fmt.Errorf("workiq broker: identify lock: %w", err)
+	}
 	listener, err := net.Listen("tcp4", net.JoinHostPort(brokerAddress, "0"))
 	if err != nil {
 		return fmt.Errorf("workiq broker: listen: %w", err)
@@ -97,10 +112,11 @@ func RunBroker(ctx context.Context) error {
 		Token:   token,
 		PID:     os.Getpid(),
 		Version: brokerVersion,
+		ID:      instanceID,
 	}); err != nil {
 		return err
 	}
-	defer os.Remove(brokerStatePath())
+	defer removeOwnedFile(brokerStatePath(), instanceID)
 	return serveBroker(ctx, listener, token, c)
 }
 
@@ -258,12 +274,14 @@ func startBroker() error {
 }
 
 func serveBroker(ctx context.Context, listener net.Listener, token string, graph brokerGraph) error {
+	serveCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	var wg sync.WaitGroup
 	var connectionsMu sync.Mutex
 	connections := make(map[net.Conn]struct{})
 	defer wg.Wait()
 	go func() {
-		<-ctx.Done()
+		<-serveCtx.Done()
 		_ = listener.Close()
 		connectionsMu.Lock()
 		defer connectionsMu.Unlock()
@@ -287,7 +305,7 @@ func serveBroker(ctx context.Context, listener net.Listener, token string, graph
 		}
 		connections[conn] = struct{}{}
 		connectionsMu.Unlock()
-		if ctx.Err() != nil {
+		if serveCtx.Err() != nil {
 			_ = conn.Close()
 		}
 		wg.Add(1)
@@ -299,9 +317,10 @@ func serveBroker(ctx context.Context, listener net.Listener, token string, graph
 				delete(connections, conn)
 				connectionsMu.Unlock()
 			}()
-			if handleBrokerConnection(ctx, conn, token, graph) {
+			if handleBrokerConnection(serveCtx, conn, token, graph) {
 				// A timed-out stdio request may still hold the transport mutex.
 				// Retire this broker so the next command starts a clean WorkIQ child.
+				cancel()
 				_ = listener.Close()
 			}
 		}()
@@ -321,13 +340,29 @@ func handleBrokerConnection(ctx context.Context, conn net.Conn, token string, gr
 	}
 	response := brokerResponse{}
 	timedOut := false
+	operationCtx, cancel := context.WithTimeout(ctx, brokerTimeout)
+	defer cancel()
+	peerGone := make(chan struct{})
+	go func() {
+		_, _ = conn.Read(make([]byte, 1))
+		close(peerGone)
+	}()
+	go func() {
+		select {
+		case <-peerGone:
+			cancel()
+		case <-operationCtx.Done():
+		}
+	}()
 	switch {
 	case request.Token != token:
 		response.Error = "workiq broker: unauthorized request"
 	case request.Method == "fetch":
-		requestCtx, cancel := context.WithTimeout(ctx, brokerTimeout)
-		results, err := graph.Fetch(requestCtx, request.EntityURLs...)
-		cancel()
+		if operationCtx.Err() != nil {
+			response.Error = operationCtx.Err().Error()
+			break
+		}
+		results, err := graph.Fetch(operationCtx, request.EntityURLs...)
 		response.Results = results
 		if err != nil {
 			response.Error = err.Error()
@@ -341,9 +376,11 @@ func handleBrokerConnection(ctx context.Context, conn net.Conn, token string, gr
 				break
 			}
 		}
-		requestCtx, cancel := context.WithTimeout(ctx, brokerTimeout)
-		data, err := graph.DoAction(requestCtx, request.ActionURL, body)
-		cancel()
+		if operationCtx.Err() != nil {
+			response.Error = operationCtx.Err().Error()
+			break
+		}
+		data, err := graph.DoAction(operationCtx, request.ActionURL, body)
 		response.Data = data
 		if err != nil {
 			response.Error = err.Error()
@@ -423,7 +460,7 @@ func readBrokerState() (brokerState, error) {
 	if state.Error != "" {
 		return brokerState{}, &brokerStartupError{message: state.Error}
 	}
-	if state.Address == "" || state.Token == "" || state.PID < 1 || state.Version != brokerVersion {
+	if state.Address == "" || state.Token == "" || state.PID < 1 || state.Version != brokerVersion || state.ID == "" {
 		return brokerState{}, errors.New("invalid broker state")
 	}
 	return state, nil
@@ -437,7 +474,27 @@ func recoverStaleBrokerLock() {
 	lockPath := filepath.Join(dir, "broker.lock")
 	info, err := os.Stat(lockPath)
 	if err == nil && time.Since(info.ModTime()) > brokerTimeout {
+		if state, stateErr := readBrokerState(); stateErr == nil && brokerHealthy(context.Background(), state) {
+			return
+		}
 		_ = os.Remove(lockPath)
+	}
+}
+
+func removeOwnedFile(path, instanceID string) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return
+	}
+	var state brokerState
+	if json.Unmarshal(data, &state) == nil {
+		if state.ID == instanceID {
+			_ = os.Remove(path)
+		}
+		return
+	}
+	if string(data) == instanceID {
+		_ = os.Remove(path)
 	}
 }
 
