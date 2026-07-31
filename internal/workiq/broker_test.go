@@ -142,6 +142,73 @@ func TestBrokerUnavailableIsRetryable(t *testing.T) {
 	}
 }
 
+func TestBrokerCallCancelsAfterConnecting(t *testing.T) {
+	listener, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer listener.Close()
+	go func() {
+		conn, err := listener.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		var request brokerRequest
+		_ = json.NewDecoder(conn).Decode(&request)
+		<-time.After(time.Second)
+	}()
+
+	client := &brokerClient{state: brokerState{
+		Address: listener.Addr().String(),
+		Token:   "test-token",
+		PID:     1,
+		Version: brokerVersion,
+	}}
+	ctx, cancel := context.WithCancel(context.Background())
+	result := make(chan error, 1)
+	go func() {
+		var response brokerResponse
+		result <- client.callOnce(ctx, client.currentState(), brokerRequest{Method: "fetch"}, &response)
+	}()
+	time.Sleep(20 * time.Millisecond)
+	cancel()
+	select {
+	case err := <-result:
+		if !errors.Is(err, errBrokerUnavailable) {
+			t.Fatalf("callOnce error = %v, want unavailable error", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("callOnce did not stop after context cancellation")
+	}
+}
+
+func TestBrokerShutdownClosesSilentClients(t *testing.T) {
+	listener, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		done <- serveBroker(ctx, listener, "test-token", &fakeBrokerGraph{})
+	}()
+	conn, err := net.Dial("tcp", listener.Addr().String())
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer conn.Close()
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("serveBroker: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("broker did not stop with a silent client connected")
+	}
+}
+
 func TestDeadlineWithoutContextDeadline(t *testing.T) {
 	before := time.Now()
 	got := deadline(context.Background())

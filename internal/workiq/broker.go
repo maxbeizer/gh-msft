@@ -151,6 +151,15 @@ func (c *brokerClient) callOnce(ctx context.Context, state brokerState, request 
 		return fmt.Errorf("%w: %v", errBrokerUnavailable, err)
 	}
 	defer conn.Close()
+	done := make(chan struct{})
+	defer close(done)
+	go func() {
+		select {
+		case <-ctx.Done():
+			_ = conn.Close()
+		case <-done:
+		}
+	}()
 	request.Token = state.Token
 	if err := conn.SetDeadline(deadline(ctx)); err != nil {
 		return fmt.Errorf("workiq broker: set deadline: %w", err)
@@ -223,10 +232,17 @@ func startBroker() error {
 
 func serveBroker(ctx context.Context, listener net.Listener, token string, graph brokerGraph) error {
 	var wg sync.WaitGroup
+	var connectionsMu sync.Mutex
+	connections := make(map[net.Conn]struct{})
 	defer wg.Wait()
 	go func() {
 		<-ctx.Done()
 		_ = listener.Close()
+		connectionsMu.Lock()
+		defer connectionsMu.Unlock()
+		for conn := range connections {
+			_ = conn.Close()
+		}
 	}()
 	for {
 		conn, err := listener.Accept()
@@ -236,18 +252,35 @@ func serveBroker(ctx context.Context, listener net.Listener, token string, graph
 			}
 			return fmt.Errorf("workiq broker: accept: %w", err)
 		}
+		connectionsMu.Lock()
+		connections[conn] = struct{}{}
+		connectionsMu.Unlock()
+		if ctx.Err() != nil {
+			_ = conn.Close()
+		}
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			defer conn.Close()
+			defer func() {
+				connectionsMu.Lock()
+				delete(connections, conn)
+				connectionsMu.Unlock()
+			}()
 			handleBrokerConnection(ctx, conn, token, graph)
 		}()
 	}
 }
 
 func handleBrokerConnection(ctx context.Context, conn net.Conn, token string, graph brokerGraph) {
+	if err := conn.SetReadDeadline(time.Now().Add(brokerTimeout)); err != nil {
+		return
+	}
 	var request brokerRequest
 	if err := json.NewDecoder(conn).Decode(&request); err != nil {
+		return
+	}
+	if err := conn.SetReadDeadline(time.Time{}); err != nil {
 		return
 	}
 	response := brokerResponse{}
