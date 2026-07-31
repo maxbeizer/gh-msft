@@ -31,6 +31,14 @@ func main() {
 		}
 	}()
 
+	if len(os.Args) > 1 && os.Args[1] == "__broker" {
+		if err := workiq.RunBroker(ctx); err != nil {
+			userMessages.Printf("broker error: %v", err)
+			os.Exit(1)
+		}
+		return
+	}
+
 	rootCmd := cli.NewRootCmd(cli.DefaultFactory)
 	if err := rootCmd.ExecuteContext(ctx); err != nil {
 		userMessages.Printf("error: %v", err)
