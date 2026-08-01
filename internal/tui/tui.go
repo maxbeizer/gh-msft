@@ -319,29 +319,16 @@ func (m *Model) removeByID(id string) {
 	m.clampCursor()
 }
 
-var (
-	titleStyle    = lipgloss.NewStyle().Bold(true).Padding(0, 1)
-	selectedStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("13"))
-	unreadStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("12"))
-	helpStyle     = lipgloss.NewStyle().Faint(true)
-)
-
 // View renders the current state.
 func (m Model) View() string {
 	if m.quitting {
 		return ""
 	}
 	if m.err != nil {
-		return fmt.Sprintf("Error: %v\n\nPress q to quit.\n", m.err)
+		return m.errorView()
 	}
 	if m.loading {
-		if m.mode == calendarMode {
-			return "Loading calendar…\n"
-		}
-		if m.all {
-			return "Loading all mail…\n"
-		}
-		return "Loading inbox…\n"
+		return m.loadingView()
 	}
 	if m.viewing {
 		return m.detailView()
@@ -355,65 +342,59 @@ func (m Model) View() string {
 // viewMail renders the inbox list.
 func (m Model) viewMail() string {
 	var b strings.Builder
-	b.WriteString(titleStyle.Render(fmt.Sprintf("Inbox (%d)", len(m.messages))))
-	b.WriteString("\n\n")
 
 	if len(m.messages) == 0 {
-		b.WriteString("  (no messages)\n")
+		b.WriteString(styles.empty.Render("No messages in this view."))
+		b.WriteString("\n")
 	}
 	for i, msg := range m.messages {
-		cursor := "  "
-		if i == m.cursor {
-			cursor = "> "
-		}
-		marker := "●"
-		if msg.IsRead {
-			marker = " "
-		}
-		from := msg.From.Name
-		if from == "" {
-			from = msg.From.Email
-		}
-		line := fmt.Sprintf("%s%s %-22s %s", cursor, marker, truncate(from, 22), truncate(msg.Subject, m.subjectWidth()))
+		line := m.mailLine(i, msg)
 		switch {
 		case i == m.cursor:
-			line = selectedStyle.Render(line)
+			line = styles.selected.Render(line)
 		case !msg.IsRead:
-			line = unreadStyle.Render(line)
+			line = styles.unread.Render(line)
 		}
 		b.WriteString(line)
 		b.WriteString("\n")
 	}
 
 	b.WriteString(m.footer())
-	return b.String()
+	return m.screen(m.chrome("Inbox", len(m.messages)), b.String())
 }
 
 // viewCalendar renders a simple list of upcoming calendar events. A richer
 // per-day layout will replace it later.
 func (m Model) viewCalendar() string {
 	var b strings.Builder
-	b.WriteString(titleStyle.Render(fmt.Sprintf("Calendar (%d)", len(m.events))))
-	b.WriteString("\n\n")
 
 	if len(m.events) == 0 {
-		b.WriteString("  (no upcoming events)\n")
+		b.WriteString(styles.empty.Render("No upcoming events."))
+		b.WriteString("\n")
 	}
 	for i, e := range m.events {
 		cursor := "  "
 		if i == m.cursor {
 			cursor = "> "
 		}
-		line := fmt.Sprintf("%s%-36s %s", cursor, eventWhen(e), truncate(e.Subject, 40))
+		whenWidth := 28
+		if m.isNarrow() {
+			whenWidth = 14
+		}
+		subjectWidth := m.listWidth() - len(cursor) - whenWidth - 1
+		if subjectWidth < 8 {
+			subjectWidth = 8
+		}
+		line := fmt.Sprintf("%s%-*s %s", cursor, whenWidth, truncate(eventWhen(e), whenWidth), truncate(e.Subject, subjectWidth))
 		if i == m.cursor {
-			line = selectedStyle.Render(line)
+			line = styles.selected.Render(line)
 		}
 		b.WriteString(line)
 		b.WriteString("\n")
 	}
 
 	b.WriteString(m.footer())
-	return b.String()
+	return m.screen(m.chrome("Calendar", len(m.events)), b.String())
 }
 
 // eventWhen formats an event's start and end for the calendar list. All-day
@@ -449,14 +430,19 @@ func (m Model) footer() string {
 	var b strings.Builder
 	b.WriteString("\n")
 	if m.status != "" {
-		b.WriteString(helpStyle.Render(m.status))
+		b.WriteString(styles.status.Render("Status: " + m.status))
 		b.WriteString("\n")
 	}
+	var phrases []string
 	if m.showHelp {
-		b.WriteString(helpStyle.Render("j/k move · enter open · a archive · r toggle read · R refresh · g/G top/bottom · tab mail/calendar · ? help · q quit"))
+		phrases = []string{
+			"j/k move", "enter open", "a archive", "r toggle read", "R refresh",
+			"g/G top/bottom", "tab mail/calendar", "? help", "q quit",
+		}
 	} else {
-		b.WriteString(helpStyle.Render("enter open · tab switch · ? help · q quit"))
+		phrases = []string{"enter open", "tab switch", "? help", "q quit"}
 	}
+	b.WriteString(styles.help.Render("Help: " + wrapPhrases(phrases, m.listWidth()-6)))
 	b.WriteString("\n")
 	return b.String()
 }
@@ -465,38 +451,37 @@ func (m Model) footer() string {
 func (m Model) detailView() string {
 	sel := m.selected()
 	if sel == nil {
-		return "No message.\n\nPress esc to go back.\n"
+		return m.screen(m.chrome("Message", -1), styles.empty.Render("No message.")+"\n\n"+styles.help.Render("Help: esc to go back"))
 	}
 
 	var b strings.Builder
-	width := m.width
-	if width <= 0 {
-		width = 80
-	}
-	b.WriteString(titleStyle.Render(lipgloss.NewStyle().Width(width).Render(sel.Subject)))
+	width := m.listWidth()
+	b.WriteString(styles.header.Render(truncate(sel.Subject, width)))
 	b.WriteString("\n\n")
 	if !sel.Received.IsZero() {
-		b.WriteString(helpStyle.Render("Received: " + sel.Received.Time.Local().Format("Jan 02 15:04")))
+		b.WriteString(styles.metadata.Render("Received: " + sel.Received.Time.Local().Format("Jan 02 15:04")))
 		b.WriteString("\n")
 	}
-	b.WriteString(helpStyle.Width(width).Render("From: " + formatAddr(sel.From)))
+	b.WriteString(styles.metadata.Render(truncate("From: "+formatAddr(sel.From), width)))
 	b.WriteString("\n")
-	b.WriteString(helpStyle.Width(width).Render("To: " + formatAddrs(sel.To)))
+	b.WriteString(styles.metadata.Render(truncate("To: "+formatAddrs(sel.To), width)))
 	b.WriteString("\n")
 	b.WriteString("\n")
 	switch {
 	case m.bodyLoading:
-		b.WriteString("Loading message…\n")
+		b.WriteString(styles.loading.Render("Loading message…"))
+		b.WriteString("\n")
 	case m.body == "":
-		b.WriteString("(empty message)\n")
+		b.WriteString(styles.empty.Render("This message has no body."))
+		b.WriteString("\n")
 	default:
 		b.WriteString(lipgloss.NewStyle().Width(width).Render(m.body))
 		b.WriteString("\n")
 	}
 	b.WriteString("\n")
-	b.WriteString(helpStyle.Render("esc/enter back · ctrl+c quit"))
+	b.WriteString(styles.help.Render("Help: esc/enter back · ctrl+c quit"))
 	b.WriteString("\n")
-	return b.String()
+	return m.screen(m.chrome("Message", -1), b.String())
 }
 
 func formatAddr(a mail.Address) string {
@@ -521,19 +506,143 @@ func formatAddrs(as []mail.Address) string {
 	return strings.Join(parts, ", ")
 }
 
-// subjectWidth returns how many columns the subject may use, derived from the
-// terminal width so a resize shows more or less of the title. The fixed prefix
-// (cursor, marker, from column, and separating spaces) is 27 columns.
+// subjectWidth returns how many columns the subject may use in a standard-width
+// inbox row. Narrow terminals use a two-line row instead.
 func (m Model) subjectWidth() int {
-	const prefix = 27
-	if m.width <= 0 {
-		return 50
-	}
-	w := m.width - prefix
-	if w < 10 {
-		w = 10
+	const prefix = 31
+	w := m.listWidth() - prefix
+	if w < 8 {
+		w = 8
 	}
 	return w
+}
+
+func (m Model) mailLine(i int, msg mail.Message) string {
+	cursor := "  "
+	if i == m.cursor {
+		cursor = "> "
+	}
+	from := msg.From.Name
+	if from == "" {
+		from = msg.From.Email
+	}
+	if m.isNarrow() {
+		state := ""
+		if !msg.IsRead {
+			state = "NEW "
+		}
+		return fmt.Sprintf("%s%s%s\n    %s", cursor, state, truncate(from, m.listWidth()-len(cursor)-len(state)), truncate(msg.Subject, m.listWidth()-4))
+	}
+	state := "    "
+	if !msg.IsRead {
+		state = "NEW "
+	}
+	return fmt.Sprintf("%s%s %-22s %s", cursor, state, truncate(from, 22), truncate(msg.Subject, m.subjectWidth()))
+}
+
+func (m Model) loadingView() string {
+	message := "Loading inbox…"
+	if m.mode == calendarMode {
+		message = "Loading calendar…"
+	} else if m.all {
+		message = "Loading all mail…"
+	}
+	return m.screen(m.chrome(m.modeTitle(), -1), styles.loading.Render(message))
+}
+
+func (m Model) errorView() string {
+	width := m.listWidth()
+	content := styles.error.Render("Error") + "\n" +
+		lipgloss.NewStyle().Width(width).Render(m.err.Error()) + "\n\n" +
+		styles.help.Render("Press q to quit.")
+	return styles.app.Render(m.chrome("Error", -1)+"\n"+m.errorPanel(content)) + "\n"
+}
+
+func (m Model) chrome(title string, count int) string {
+	if count >= 0 {
+		title = fmt.Sprintf("%s (%d)", title, count)
+	}
+	if m.isNarrow() {
+		return styles.chrome.Render("gh msft · " + title)
+	}
+	mailTab := styles.inactiveTab.Render("Mail")
+	calendarTab := styles.inactiveTab.Render("Calendar")
+	if m.mode == mailMode {
+		mailTab = styles.activeTab.Render("[Mail]")
+	} else {
+		calendarTab = styles.activeTab.Render("[Calendar]")
+	}
+	return styles.chrome.Render("gh msft") + "  " + mailTab + "  " + calendarTab + "  " + styles.header.Render(title)
+}
+
+func (m Model) screen(chrome, content string) string {
+	return styles.app.Render(chrome+"\n"+m.panel(content)) + "\n"
+}
+
+func (m Model) panel(content string) string {
+	if m.isNarrow() {
+		return styles.compactPanel.Render(content)
+	}
+	return styles.panel.Render(content)
+}
+
+func (m Model) errorPanel(content string) string {
+	if m.isNarrow() {
+		return styles.compactError.Render(content)
+	}
+	return styles.errorPanel.Render(content)
+}
+
+func (m Model) modeTitle() string {
+	if m.mode == calendarMode {
+		return "Calendar"
+	}
+	return "Inbox"
+}
+
+func (m Model) isNarrow() bool {
+	return m.width > 0 && m.width < 54
+}
+
+func (m Model) listWidth() int {
+	if m.width <= 0 {
+		return 74
+	}
+	inset := 6
+	if m.isNarrow() {
+		inset = 4
+	}
+	width := m.width - inset
+	if width < 12 {
+		return 12
+	}
+	return width
+}
+
+func wrapPhrases(phrases []string, width int) string {
+	if width <= 0 {
+		return strings.Join(phrases, " · ")
+	}
+	var b strings.Builder
+	lineWidth := 0
+	for _, phrase := range phrases {
+		phraseWidth := lipgloss.Width(phrase)
+		if lineWidth == 0 {
+			b.WriteString(phrase)
+			lineWidth = phraseWidth
+			continue
+		}
+		if lineWidth+3+phraseWidth > width {
+			b.WriteString("\n")
+			b.WriteString(phrase)
+			lineWidth = phraseWidth
+			continue
+		}
+		b.WriteString(" · ")
+		b.WriteString(phrase)
+		lineWidth += 3 + phraseWidth
+	}
+	return b.String()
 }
 
 func truncate(s string, n int) string {

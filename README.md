@@ -80,6 +80,13 @@ gh msft tui --cal                 # start in calendar mode
 The TUI has two modes: mail (inbox) and calendar (upcoming events). Press
 `tab` to switch, or start in calendar mode with `--cal`.
 
+Its app chrome, panels, headers, metadata, status, help, loading, and error
+states use one visual system. The active tab is bracketed, the current row has
+an `>` marker, and unread messages include a `NEW` label, so state stays clear
+without color. Colors adapt to light or dark terminals and Lip Gloss falls back
+to the same readable text hierarchy on terminals without color support. Narrow
+terminals use compact panels and two-line inbox rows to preserve message context.
+
 | Key        | Action                          |
 | ---------- | ------------------------------- |
 | `j` / `k`  | move down / up (also arrows)    |
