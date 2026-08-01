@@ -6,9 +6,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/url"
+	"strings"
 	"time"
 
 	"github.com/maxbeizer/gh-msft/internal/mstime"
+	"github.com/maxbeizer/gh-msft/internal/plaintext"
 	"github.com/maxbeizer/gh-msft/internal/workiq"
 )
 
@@ -22,10 +25,35 @@ type Event struct {
 	Organizer string      `json:"organizer"`
 }
 
+// Participant identifies an event organizer or attendee.
+type Participant struct {
+	Name  string `json:"name"`
+	Email string `json:"email"`
+}
+
+// Detail contains the full event data rendered by the interactive TUI.
+type Detail struct {
+	ID              string        `json:"id"`
+	Subject         string        `json:"subject"`
+	Start           mstime.Time   `json:"start"`
+	End             mstime.Time   `json:"end"`
+	IsAllDay        bool          `json:"isAllDay"`
+	Organizer       Participant   `json:"organizer"`
+	Attendees       []Participant `json:"attendees"`
+	Location        string        `json:"location"`
+	Body            string        `json:"body"`
+	BodyPreview     string        `json:"bodyPreview"`
+	WebLink         string        `json:"webLink"`
+	JoinURL         string        `json:"joinUrl"`
+	IsOnlineMeeting bool          `json:"isOnlineMeeting"`
+}
+
 // Provider reads calendar data.
 type Provider interface {
 	// Upcoming returns up to top events starting from now, ordered by start time.
 	Upcoming(ctx context.Context, top int) ([]Event, error)
+	// GetDetail returns the full event data by id.
+	GetDetail(ctx context.Context, id string) (Detail, error)
 }
 
 // graphClient is the subset of the WorkIQ client this package needs.
@@ -61,6 +89,25 @@ type graphEvent struct {
 			Address string `json:"address"`
 		} `json:"emailAddress"`
 	} `json:"organizer"`
+	Attendees []struct {
+		EmailAddress struct {
+			Name    string `json:"name"`
+			Address string `json:"address"`
+		} `json:"emailAddress"`
+	} `json:"attendees"`
+	Body struct {
+		ContentType string `json:"contentType"`
+		Content     string `json:"content"`
+	} `json:"body"`
+	BodyPreview string `json:"bodyPreview"`
+	Location    struct {
+		DisplayName string `json:"displayName"`
+	} `json:"location"`
+	WebLink         string `json:"webLink"`
+	IsOnlineMeeting bool   `json:"isOnlineMeeting"`
+	OnlineMeeting   struct {
+		JoinURL string `json:"joinUrl"`
+	} `json:"onlineMeeting"`
 }
 
 type graphEventCollection struct {
@@ -100,6 +147,29 @@ func (p *WorkIQProvider) upcomingViaEvents(ctx context.Context, top int) ([]Even
 	return parseEvents(results)
 }
 
+// GetDetail retrieves one event with its body, attendees, and browser links.
+func (p *WorkIQProvider) GetDetail(ctx context.Context, id string) (Detail, error) {
+	if id == "" {
+		return Detail{}, fmt.Errorf("calendar: GetDetail requires an event id")
+	}
+	url := fmt.Sprintf(
+		"/me/events/%s?$select=subject,body,bodyPreview,organizer,attendees,start,end,location,webLink,onlineMeeting,isOnlineMeeting",
+		url.PathEscape(id),
+	)
+	results, err := p.c.Fetch(ctx, url)
+	if err != nil {
+		return Detail{}, err
+	}
+	if len(results) == 0 {
+		return Detail{}, fmt.Errorf("calendar: event %q was not found", id)
+	}
+	var event graphEvent
+	if err := json.Unmarshal(results[0].Data, &event); err != nil {
+		return Detail{}, fmt.Errorf("calendar: decode event: %w", err)
+	}
+	return detailFromGraph(event), nil
+}
+
 func parseEvents(results []workiq.FetchResult) ([]Event, error) {
 	if len(results) == 0 {
 		return nil, nil
@@ -110,18 +180,51 @@ func parseEvents(results []workiq.FetchResult) ([]Event, error) {
 	}
 	events := make([]Event, 0, len(coll.Value))
 	for _, ge := range coll.Value {
-		organizer := ge.Organizer.EmailAddress.Name
-		if organizer == "" {
-			organizer = ge.Organizer.EmailAddress.Address
-		}
-		events = append(events, Event{
-			ID:        ge.ID,
-			Subject:   ge.Subject,
-			Start:     mstime.Parse(ge.Start.DateTime),
-			End:       mstime.Parse(ge.End.DateTime),
-			IsAllDay:  ge.IsAllDay,
-			Organizer: organizer,
-		})
+		events = append(events, eventFromGraph(ge))
 	}
 	return events, nil
+}
+
+func eventFromGraph(event graphEvent) Event {
+	organizer := event.Organizer.EmailAddress.Name
+	if organizer == "" {
+		organizer = event.Organizer.EmailAddress.Address
+	}
+	return Event{
+		ID:        event.ID,
+		Subject:   event.Subject,
+		Start:     mstime.Parse(event.Start.DateTime),
+		End:       mstime.Parse(event.End.DateTime),
+		IsAllDay:  event.IsAllDay,
+		Organizer: organizer,
+	}
+}
+
+func detailFromGraph(event graphEvent) Detail {
+	attendees := make([]Participant, 0, len(event.Attendees))
+	for _, attendee := range event.Attendees {
+		attendees = append(attendees, Participant{
+			Name:  attendee.EmailAddress.Name,
+			Email: attendee.EmailAddress.Address,
+		})
+	}
+	body := event.Body.Content
+	if strings.EqualFold(event.Body.ContentType, "html") {
+		body = plaintext.HTMLToText(body)
+	}
+	return Detail{
+		ID:              event.ID,
+		Subject:         event.Subject,
+		Start:           mstime.Parse(event.Start.DateTime),
+		End:             mstime.Parse(event.End.DateTime),
+		IsAllDay:        event.IsAllDay,
+		Organizer:       Participant{Name: event.Organizer.EmailAddress.Name, Email: event.Organizer.EmailAddress.Address},
+		Attendees:       attendees,
+		Location:        event.Location.DisplayName,
+		Body:            body,
+		BodyPreview:     event.BodyPreview,
+		WebLink:         event.WebLink,
+		JoinURL:         event.OnlineMeeting.JoinURL,
+		IsOnlineMeeting: event.IsOnlineMeeting,
+	}
 }

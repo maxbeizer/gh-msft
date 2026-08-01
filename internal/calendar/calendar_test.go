@@ -117,6 +117,55 @@ func TestUpcomingEmpty(t *testing.T) {
 	}
 }
 
+func TestGetDetailParsesEventAndLinks(t *testing.T) {
+	fg := &fakeGraph{byURL: map[string]string{"/me/events/E1": `{
+		"id":"E1",
+		"subject":"Planning",
+		"start":{"dateTime":"2026-07-20T16:30:00.0000000","timeZone":"UTC"},
+		"end":{"dateTime":"2026-07-20T17:00:00.0000000","timeZone":"UTC"},
+		"organizer":{"emailAddress":{"name":"Ada Lovelace","address":"ada@example.com"}},
+		"attendees":[{"emailAddress":{"name":"Grace Hopper","address":"grace@example.com"}}],
+		"location":{"displayName":"Conference room"},
+		"body":{"contentType":"HTML","content":"<p>Discuss <strong>roadmap</strong></p>"},
+		"bodyPreview":"Discuss roadmap",
+		"webLink":"https://outlook.office.com/calendar/item",
+		"onlineMeeting":{"joinUrl":"https://teams.microsoft.com/l/meetup-join/abc"},
+		"isOnlineMeeting":true
+	}`}}
+	p := NewWorkIQProvider(fg)
+
+	got, err := p.GetDetail(context.Background(), "E1")
+	if err != nil {
+		t.Fatalf("GetDetail: %v", err)
+	}
+	if got.Subject != "Planning" || got.Location != "Conference room" || got.Body != "Discuss roadmap" {
+		t.Errorf("detail = %+v", got)
+	}
+	if got.Organizer.Email != "ada@example.com" || len(got.Attendees) != 1 || got.Attendees[0].Email != "grace@example.com" {
+		t.Errorf("participants = organizer:%+v attendees:%+v", got.Organizer, got.Attendees)
+	}
+	if got.JoinURL != "https://teams.microsoft.com/l/meetup-join/abc" || got.WebLink == "" || !got.IsOnlineMeeting {
+		t.Errorf("links = %+v", got)
+	}
+	if len(fg.calls) != 1 {
+		t.Fatalf("fetch calls = %v, want one", fg.calls)
+	}
+	wantSelect := "$select=subject,body,bodyPreview,organizer,attendees,start,end,location,webLink,onlineMeeting,isOnlineMeeting"
+	if !strings.Contains(fg.calls[0], wantSelect) {
+		t.Errorf("fetch URL %q missing detail fields", fg.calls[0])
+	}
+	if strings.Contains(fg.calls[0], "onlineMeetingUrl") {
+		t.Errorf("fetch URL %q must not use deprecated onlineMeetingUrl", fg.calls[0])
+	}
+}
+
+func TestGetDetailRequiresID(t *testing.T) {
+	p := NewWorkIQProvider(&fakeGraph{})
+	if _, err := p.GetDetail(context.Background(), ""); err == nil {
+		t.Fatal("expected an error for an empty event id")
+	}
+}
+
 // errThenOK errors on the calendarView call and succeeds on /me/events.
 type errThenOK struct {
 	errURLSub string

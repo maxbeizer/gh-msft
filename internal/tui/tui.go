@@ -11,6 +11,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/maxbeizer/gh-msft/internal/browser"
 	"github.com/maxbeizer/gh-msft/internal/calendar"
 	"github.com/maxbeizer/gh-msft/internal/mail"
 )
@@ -21,6 +22,12 @@ type eventsLoadedMsg struct{ events []calendar.Event }
 type bodyLoadedMsg struct {
 	id   string
 	body string
+}
+type eventDetailLoadedMsg struct{ detail calendar.Detail }
+type urlOpenedMsg struct{ label string }
+type urlOpenErrMsg struct {
+	label string
+	err   error
 }
 type archivedMsg struct{ id string }
 type errMsg struct{ err error }
@@ -54,9 +61,13 @@ type Model struct {
 	quitting bool
 
 	viewing      bool
+	viewingEvent bool
 	body         string
 	bodyLoading  bool
+	eventDetail  calendar.Detail
+	eventLoading bool
 	detailOffset int
+	openURL      func(string) error
 
 	width  int
 	height int
@@ -68,7 +79,7 @@ func New(provider mail.Provider, top int, all bool) Model {
 	if top <= 0 {
 		top = 50
 	}
-	return Model{provider: provider, top: top, all: all, loading: true}
+	return Model{provider: provider, top: top, all: all, loading: true, openURL: browser.OpenURL}
 }
 
 // Init kicks off the initial load for the starting mode.
@@ -123,6 +134,28 @@ func bodyCmd(provider mail.Provider, id string) tea.Cmd {
 	}
 }
 
+func eventDetailCmd(provider calendar.Provider, id string) tea.Cmd {
+	return func() tea.Msg {
+		if provider == nil {
+			return errMsg{fmt.Errorf("calendar details are unavailable")}
+		}
+		detail, err := provider.GetDetail(context.Background(), id)
+		if err != nil {
+			return errMsg{err}
+		}
+		return eventDetailLoadedMsg{detail}
+	}
+}
+
+func openURLCmd(openURL func(string) error, rawURL, label string) tea.Cmd {
+	return func() tea.Msg {
+		if err := openURL(rawURL); err != nil {
+			return urlOpenErrMsg{label: label, err: err}
+		}
+		return urlOpenedMsg{label: label}
+	}
+}
+
 // Update satisfies tea.Model. The concrete-typed update method below carries the
 // real logic so it can be unit-tested without interface boxing.
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -160,11 +193,27 @@ func (m Model) update(msg tea.Msg) (Model, tea.Cmd) {
 		m.clampDetailOffset()
 		return m, nil
 
+	case eventDetailLoadedMsg:
+		m.eventDetail = msg.detail
+		m.eventLoading = false
+		m.clampDetailOffset()
+		return m, nil
+
+	case urlOpenedMsg:
+		m.status = "Opened " + msg.label + " in your browser."
+		return m, nil
+
+	case urlOpenErrMsg:
+		m.status = fmt.Sprintf("Could not open %s: %v", msg.label, msg.err)
+		return m, nil
+
 	case errMsg:
 		m.err = msg.err
 		m.loading = false
 		m.bodyLoading = false
+		m.eventLoading = false
 		m.viewing = false
+		m.viewingEvent = false
 		return m, nil
 
 	case archivedMsg:
@@ -205,6 +254,19 @@ func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 		}
 		return m, nil
 	case "enter":
+		if m.mode == calendarMode {
+			sel := m.selectedEvent()
+			if sel == nil {
+				return m, nil
+			}
+			m.viewing = true
+			m.viewingEvent = true
+			m.eventLoading = true
+			m.eventDetail = calendar.Detail{}
+			m.detailOffset = 0
+			m.status = ""
+			return m, eventDetailCmd(m.cal, sel.ID)
+		}
 		sel := m.selected()
 		if sel == nil {
 			return m, nil
@@ -256,11 +318,19 @@ func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 func (m Model) handleDetailKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 	switch msg.String() {
 	case "esc", "enter", "q", "backspace":
-		m.viewing = false
-		m.body = ""
-		m.bodyLoading = false
-		m.detailOffset = 0
-	case "j", "down":
+		m.closeDetail()
+	case "j":
+		if m.viewingEvent {
+			return m.openEventURL(m.eventDetail.JoinURL, "meeting link")
+		}
+		m.detailOffset++
+		m.clampDetailOffset()
+	case "o":
+		if m.viewingEvent {
+			return m.openEventURL(m.eventDetail.WebLink, "Outlook event")
+		}
+		return m, nil
+	case "down":
 		m.detailOffset++
 		m.clampDetailOffset()
 	case "k", "up":
@@ -272,6 +342,30 @@ func (m Model) handleDetailKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 		m.detailOffset = m.maxDetailOffset()
 	}
 	return m, nil
+}
+
+func (m *Model) closeDetail() {
+	m.viewing = false
+	m.viewingEvent = false
+	m.body = ""
+	m.bodyLoading = false
+	m.eventDetail = calendar.Detail{}
+	m.eventLoading = false
+	m.detailOffset = 0
+	m.status = ""
+}
+
+func (m Model) openEventURL(rawURL, label string) (Model, tea.Cmd) {
+	if rawURL == "" {
+		m.status = "This event has no " + label + "."
+		return m, nil
+	}
+	if m.openURL == nil {
+		m.status = "Could not open " + label + ": browser launcher is unavailable."
+		return m, nil
+	}
+	m.status = "Opening " + label + "…"
+	return m, openURLCmd(m.openURL, rawURL, label)
 }
 
 // loadForModeCmd returns a load command when the current mode's data has not been
@@ -329,7 +423,7 @@ func (m *Model) clampDetailOffset() {
 }
 
 // selected returns the highlighted mail message, or nil when not in mail mode or
-// the inbox is empty. Calendar mode has no selectable mail actions yet.
+// the inbox is empty.
 func (m *Model) selected() *mail.Message {
 	if m.mode != mailMode {
 		return nil
@@ -338,6 +432,16 @@ func (m *Model) selected() *mail.Message {
 		return nil
 	}
 	return &m.messages[m.cursor]
+}
+
+func (m *Model) selectedEvent() *calendar.Event {
+	if m.mode != calendarMode {
+		return nil
+	}
+	if m.cursor < 0 || m.cursor >= len(m.events) {
+		return nil
+	}
+	return &m.events[m.cursor]
 }
 
 func (m *Model) removeByID(id string) {
@@ -477,20 +581,23 @@ func (m Model) footer() string {
 
 func (m Model) compactHelp() string {
 	if m.mode == calendarMode {
-		return "j/k move · tab switch · ? help · q quit"
+		return "j/k move · enter open · tab switch · ? help · q quit"
 	}
 	return "j/k move · enter open · tab switch · ? help · q quit"
 }
 
 func (m Model) expandedHelp() string {
 	if m.mode == calendarMode {
-		return "j/k or ↑/↓ move · g/G or home/end top/bottom · R refresh · tab mail · ?/esc close help · q quit"
+		return "j/k or ↑/↓ move · g/G or home/end top/bottom · enter open · R refresh · tab mail · ?/esc close help · q quit"
 	}
 	return "j/k or ↑/↓ move · g/G or home/end top/bottom · enter open · a archive · r toggle read · R refresh · tab calendar · ?/esc close help · q quit"
 }
 
-// detailView renders the body of the selected message.
+// detailView renders the active mail or calendar detail.
 func (m Model) detailView() string {
+	if m.viewingEvent {
+		return m.eventDetailView()
+	}
 	sel := m.selected()
 	if sel == nil {
 		return m.screen(m.chrome("Message", -1), styles.empty.Render("No message.")+"\n\n"+styles.help.Render("Help: esc to go back"))
@@ -511,6 +618,9 @@ func (m Model) detailView() string {
 }
 
 func (m Model) detailLines() []string {
+	if m.viewingEvent {
+		return m.eventDetailLines()
+	}
 	sel := m.selected()
 	if sel == nil {
 		return []string{"No message."}
@@ -535,6 +645,95 @@ func (m Model) detailLines() []string {
 		lines = append(lines, strings.Split(lipgloss.NewStyle().Width(width).Render(m.body), "\n")...)
 	}
 	return lines
+}
+
+func (m Model) eventDetailView() string {
+	var b strings.Builder
+	lines := m.detailLines()
+	m.clampDetailOffset()
+	end := m.detailOffset + m.detailHeight()
+	if end > len(lines) {
+		end = len(lines)
+	}
+	b.WriteString(strings.Join(lines[m.detailOffset:end], "\n"))
+	b.WriteString("\n")
+	if m.status != "" {
+		b.WriteString(styles.status.Render("Status: " + m.status))
+		b.WriteString("\n")
+	}
+	b.WriteString(styles.help.Render("Help: j join meeting · o open Outlook · ↓/k scroll · g/G top/bottom · esc/enter/q back · ctrl+c quit"))
+	b.WriteString("\n")
+	return m.screen(m.chrome("Calendar event", -1), b.String())
+}
+
+func (m Model) eventDetailLines() []string {
+	if m.eventLoading {
+		return []string{styles.loading.Render("Loading event…")}
+	}
+	detail := m.eventDetail
+	width := m.listWidth()
+	subject := detail.Subject
+	if subject == "" {
+		subject = "(untitled event)"
+	}
+	lines := []string{styles.header.Render(truncate(subject, width)), ""}
+	when := eventWhen(calendar.Event{Start: detail.Start, End: detail.End, IsAllDay: detail.IsAllDay})
+	lines = append(lines,
+		styles.metadata.Render("When: "+when),
+		styles.metadata.Render(truncate("Organizer: "+formatParticipant(detail.Organizer), width)),
+		styles.metadata.Render(truncate("Attendees: "+formatParticipants(detail.Attendees), width)),
+		styles.metadata.Render(truncate("Location: "+orDash(detail.Location), width)),
+	)
+	if detail.JoinURL == "" {
+		lines = append(lines, styles.metadata.Render("Meeting link: unavailable"))
+	} else {
+		lines = append(lines, styles.metadata.Render("Meeting link: available (j to join)"))
+	}
+	if detail.WebLink == "" {
+		lines = append(lines, styles.metadata.Render("Outlook link: unavailable"))
+	} else {
+		lines = append(lines, styles.metadata.Render("Outlook link: available (o to open)"))
+	}
+	lines = append(lines, "")
+	body := detail.Body
+	if body == "" {
+		body = detail.BodyPreview
+	}
+	if body == "" {
+		lines = append(lines, styles.empty.Render("This event has no description."))
+	} else {
+		lines = append(lines, strings.Split(lipgloss.NewStyle().Width(width).Render(body), "\n")...)
+	}
+	return lines
+}
+
+func formatParticipant(participant calendar.Participant) string {
+	switch {
+	case participant.Name != "" && participant.Email != "":
+		return fmt.Sprintf("%s <%s>", participant.Name, participant.Email)
+	case participant.Email != "":
+		return participant.Email
+	default:
+		return orDash(participant.Name)
+	}
+}
+
+func formatParticipants(participants []calendar.Participant) string {
+	if len(participants) == 0 {
+		return "-"
+	}
+	formatted := make([]string, len(participants))
+	for i, participant := range participants {
+		formatted[i] = formatParticipant(participant)
+	}
+	return strings.Join(formatted, ", ")
+}
+
+func orDash(value string) string {
+	if value == "" {
+		return "-"
+	}
+	return value
 }
 
 func (m Model) detailHeight() int {

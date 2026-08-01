@@ -54,10 +54,15 @@ func (f *fakeMail) Body(ctx context.Context, id string) (string, error) {
 type fakeCal struct {
 	events []calendar.Event
 	err    error
+	detail calendar.Detail
 }
 
 func (f *fakeCal) Upcoming(ctx context.Context, top int) ([]calendar.Event, error) {
 	return f.events, f.err
+}
+
+func (f *fakeCal) GetDetail(ctx context.Context, id string) (calendar.Detail, error) {
+	return f.detail, f.err
 }
 
 type fakeEULA struct {
