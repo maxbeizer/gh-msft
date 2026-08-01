@@ -25,13 +25,14 @@ Here is a deliberately synthetic preview of the TUI--no real message or
 calendar data is used:
 
 ```text
-gh msft                                             [mail]  calendar
-Inbox                                               3 messages
-> NEW  Avery Chen        Project update             10:42 AM
-      Contoso Newsletter  August engineering news    9:15 AM
-      Morgan Lee          Lunch next week?           Yesterday
-
-j/k move  enter open  a archive  tab switch  R refresh  ? help  q quit
+gh msft   [Mail]  Calendar
+╭─ Inbox · 3 messages · Inbox ──────────────────────────╮
+│ > NEW  Avery Chen          Project update  Aug 01 10:42 │
+│        Contoso Newsletter  August news    Aug 01 09:15 │
+│        Morgan Lee          Lunch next week? Jul 31 16:08 │
+│                                                         │
+│ Help: j/k move · enter open · tab switch · ? help · q quit │
+╰─────────────────────────────────────────────────────────╯
 ```
 
 ## Why this instead of WorkIQ chat?
