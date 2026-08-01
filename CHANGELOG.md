@@ -26,6 +26,13 @@ and this project adheres to [Semantic Versioning](https://semver.org).
 - `mail archive --json` now emits a stable `{"archived":[...]}` action result
   after every requested message is archived. Existing `mail list --json` and
   `cal --json` array payloads remain unchanged.
+- Redesigned TUI inbox and calendar lists for scanability: mail rows now show
+  sender, subject, received time, unread state, and selection; calendar events
+  are grouped by day with clear all-day, same-day, and multi-day labels.
+- TUI panels now use the available terminal width instead of shrinking to the
+  longest rendered row.
+- TUI inbox and calendar lists now stay within the terminal height while keeping
+  the selected row visible during navigation.
 
 ## [0.3.0] - 2026-08-01
 
