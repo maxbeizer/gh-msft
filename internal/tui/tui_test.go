@@ -715,6 +715,22 @@ func TestNarrowListViewsFitTerminal(t *testing.T) {
 	}
 }
 
+func TestPanelsUseAvailableTerminalWidth(t *testing.T) {
+	m := New(&fakeProvider{}, 10, false)
+	m.mode = calendarMode
+	m, _ = m.update(eventsLoadedMsg{sampleEvents()})
+	m, _ = m.update(tea.WindowSizeMsg{Width: 120, Height: 24})
+
+	maxWidth := 0
+	for _, line := range strings.Split(strings.TrimSuffix(m.View(), "\n"), "\n") {
+		maxWidth = maxInt(maxWidth, lipgloss.Width(line))
+	}
+	wantWidth := m.width - 2 // The screen keeps one column of horizontal margin on each side.
+	if maxWidth != wantWidth {
+		t.Errorf("widest rendered line = %d, want available width %d", maxWidth, wantWidth)
+	}
+}
+
 func TestNoColorFallbackRemainsReadable(t *testing.T) {
 	profile := lipgloss.ColorProfile()
 	lipgloss.SetColorProfile(termenv.Ascii)

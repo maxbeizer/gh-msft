@@ -103,6 +103,8 @@ an `>` marker, and unread messages include a `NEW` label, so state stays clear
 without color. Colors adapt to light or dark terminals and Lip Gloss falls back
 to the same readable text hierarchy on terminals without color support. Narrow
 terminals use compact panels and two-line inbox rows to preserve message context.
+On wider terminals, list panels use the available width so longer calendar and
+message details remain easy to scan.
 
 | Key                    | Action                                      |
 | ---------------------- | ------------------------------------------- |

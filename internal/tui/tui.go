@@ -780,16 +780,16 @@ func (m Model) screen(chrome, content string) string {
 
 func (m Model) panel(content string) string {
 	if m.isNarrow() {
-		return styles.compactPanel.Render(content)
+		return styles.compactPanel.Width(m.listWidth()).Render(content)
 	}
-	return styles.panel.Render(content)
+	return styles.panel.Width(m.listWidth()).Render(content)
 }
 
 func (m Model) errorPanel(content string) string {
 	if m.isNarrow() {
-		return styles.compactError.Render(content)
+		return styles.compactError.Width(m.listWidth()).Render(content)
 	}
-	return styles.errorPanel.Render(content)
+	return styles.errorPanel.Width(m.listWidth()).Render(content)
 }
 
 func (m Model) modeTitle() string {

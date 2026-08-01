@@ -27,6 +27,8 @@ and this project adheres to [Semantic Versioning](https://semver.org).
 - Redesigned TUI inbox and calendar lists for scanability: mail rows now show
   sender, subject, received time, unread state, and selection; calendar events
   are grouped by day with clear all-day, same-day, and multi-day labels.
+- TUI panels now use the available terminal width instead of shrinking to the
+  longest rendered row.
 
 ## [0.3.0] - 2026-08-01
 
