@@ -7,11 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org).
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-08-01
+
 ### Added
 
 - A user-scoped local WorkIQ broker now keeps one authenticated MCP connection warm
   across `gh msft` commands, with token-protected loopback transport, stale-state
   recovery, and `WORKIQ_DIRECT_PROCESS=1` for direct-process diagnosis or fallback.
+- WorkIQ startup progress now explains that the initial startup can take a few
+  seconds and later commands reuse the local broker.
 
 ## [0.2.0] - 2026-07-27
 
