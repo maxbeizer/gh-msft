@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org).
 
 ## [Unreleased]
 
+### Changed
+
+- Refreshed the README with a quick-start path, a recorded synthetic TUI demo that
+  does not expose account data, a WorkIQ comparison, practical command recipes,
+  and collapsed broker implementation details.
+
+### Added
+
+- `gh msft demo` launches the interactive UI with deterministic synthetic mail and
+  calendar data, without requiring a Microsoft 365 account or WorkIQ setup.
+
 ## [0.4.0] - 2026-08-01
 
 ### Added

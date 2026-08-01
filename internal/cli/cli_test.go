@@ -146,6 +146,30 @@ func TestRootCmdExplicitSubcommandsDoNotLaunchTUI(t *testing.T) {
 	}
 }
 
+func TestDemoCmdLaunchesTUIWithoutFactory(t *testing.T) {
+	var gotTop int
+	var gotAll, gotStartCal bool
+	runTUI := func(_ mail.Provider, _ calendar.Provider, top int, all bool, startCal bool) error {
+		gotTop = top
+		gotAll = all
+		gotStartCal = startCal
+		return nil
+	}
+	factory := func(context.Context) (*Providers, error) {
+		t.Fatal("demo should not initialize WorkIQ providers")
+		return nil, nil
+	}
+	root := newRootCmd(factory, runTUI)
+	root.SetArgs([]string{"demo", "--cal"})
+
+	if err := root.ExecuteContext(context.Background()); err != nil {
+		t.Fatalf("run demo: %v", err)
+	}
+	if gotTop != 50 || gotAll || !gotStartCal {
+		t.Errorf("demo TUI options = top:%d all:%t startCal:%t, want top:50 all:false startCal:true", gotTop, gotAll, gotStartCal)
+	}
+}
+
 func TestRootCmdHelpAndCompletionDoNotLaunchTUI(t *testing.T) {
 	for _, args := range [][]string{{"--help"}, {"help"}, {"completion", "bash"}} {
 		t.Run(strings.Join(args, " "), func(t *testing.T) {

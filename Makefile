@@ -1,4 +1,4 @@
-.PHONY: help check-go-version build run install-local relink-local test test-race coverage ci lint fmt tidy clean
+.PHONY: help check-go-version build run demo-gif install-local relink-local test test-race coverage ci lint fmt tidy clean
 .DEFAULT_GOAL := help
 
 # ── Change this to your extension name (without the gh- prefix) ──
@@ -34,6 +34,7 @@ help:
 	@echo ""
 	@echo "  make build          Build ./$(BINARY)"
 	@echo "  make run            Build and run locally"
+	@echo "  make demo-gif       Build and record docs/demo.gif with VHS"
 	@echo "  make install-local  Build and install extension from current checkout"
 	@echo "  make relink-local   Reinstall local extension link"
 	@echo "  make test           Run unit tests"
@@ -51,6 +52,9 @@ build: check-go-version
 
 run: build
 	./$(BINARY)
+
+demo-gif: build
+	vhs docs/demo.tape
 
 install-local: build
 	@mkdir -p $(dir $(LOCAL_EXTENSION_DIR))
