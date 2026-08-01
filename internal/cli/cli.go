@@ -64,6 +64,7 @@ func newRootCmd(factory Factory, runTUI tuiRunner) *cobra.Command {
 	root.AddCommand(newMailCmd(factory))
 	root.AddCommand(newCalCmd(factory))
 	root.AddCommand(newEULACmd(factory))
+	root.AddCommand(newDemoCmd(runTUI))
 	tuiCmd := newTUICmd(factory, runTUI)
 	root.AddCommand(tuiCmd)
 	root.RunE = func(cmd *cobra.Command, args []string) error {

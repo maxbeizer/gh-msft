@@ -21,19 +21,14 @@ gh msft              # open the interactive inbox and calendar
 The first command that reads Microsoft 365 may take a few seconds while WorkIQ
 starts. Later commands reuse the local connection.
 
-Here is a deliberately synthetic preview of the TUI--no real message or
-calendar data is used:
+The demo below is an actual recording of `gh msft demo`, which uses only
+deterministic synthetic mail and calendar data:
 
-```text
-gh msft   [Mail]  Calendar
-╭─ Inbox · 3 messages · Inbox ──────────────────────────╮
-│ > NEW  Avery Chen          Project update  Aug 01 10:42 │
-│        Contoso Newsletter  August news    Aug 01 09:15 │
-│        Morgan Lee          Lunch next week? Jul 31 16:08 │
-│                                                         │
-│ Help: j/k move · enter open · tab switch · ? help · q quit │
-╰─────────────────────────────────────────────────────────╯
-```
+![Recording of the gh-msft demo inbox, calendar, and event detail view.](docs/demo.gif)
+
+Regenerate the recording with `make demo-gif` (requires
+[VHS](https://github.com/charmbracelet/vhs)); the source tape is
+[`docs/demo.tape`](docs/demo.tape).
 
 ## Why this instead of WorkIQ chat?
 
@@ -117,6 +112,7 @@ gh msft cal --json                # machine-readable output
 gh msft accept-eula               # accept the WorkIQ EULA (run once)
 gh msft tui                       # interactive inbox and calendar
 gh msft tui --cal                 # start in calendar mode
+gh msft demo                      # interactive UI with synthetic data; no account required
 ```
 
 ### Recipes
