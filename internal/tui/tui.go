@@ -62,6 +62,11 @@ type Model struct {
 	height int
 }
 
+type calendarListRow struct {
+	eventIndex int
+	text       string
+}
+
 // New builds a model for the given mail provider. When all is true it loads all
 // mail instead of only the inbox.
 func New(provider mail.Provider, top int, all bool) Model {
@@ -381,7 +386,9 @@ func (m Model) viewMail() string {
 		b.WriteString(styles.empty.Render(empty))
 		b.WriteString("\n")
 	}
-	for i, msg := range m.messages {
+	start, end := m.listRange(len(m.messages), m.cursor)
+	for i := start; i < end; i++ {
+		msg := m.messages[i]
 		line := m.mailRow(i, msg)
 		switch {
 		case i == m.cursor:
@@ -402,28 +409,45 @@ func (m Model) viewCalendar() string {
 	if len(m.events) == 0 {
 		b.WriteString(styles.empty.Render("No upcoming events."))
 		b.WriteString("\n")
+	} else {
+		rows := m.calendarListRows()
+		selectedRow := 0
+		for i, row := range rows {
+			if row.eventIndex == m.cursor {
+				selectedRow = i
+				break
+			}
+		}
+		start, end := m.listRange(len(rows), selectedRow)
+		for _, row := range rows[start:end] {
+			b.WriteString(row.text)
+			b.WriteString("\n")
+		}
 	}
+
+	b.WriteString(m.footer())
+	return m.screen(m.chrome(m.calendarTitle(), -1), b.String())
+}
+
+func (m Model) calendarListRows() []calendarListRow {
+	rows := make([]calendarListRow, 0, len(m.events)*2)
 	lastDay := ""
 	for i, e := range m.events {
 		day := calendarDayLabel(e)
 		if day != lastDay {
 			if lastDay != "" {
-				b.WriteString("\n")
+				rows = append(rows, calendarListRow{eventIndex: -1, text: ""})
 			}
-			b.WriteString(styles.header.Render(day))
-			b.WriteString("\n")
+			rows = append(rows, calendarListRow{eventIndex: -1, text: styles.header.Render(day)})
 			lastDay = day
 		}
 		line := m.calendarRow(i, e)
 		if i == m.cursor {
 			line = styles.selected.Render(line)
 		}
-		b.WriteString(line)
-		b.WriteString("\n")
+		rows = append(rows, calendarListRow{eventIndex: i, text: line})
 	}
-
-	b.WriteString(m.footer())
-	return m.screen(m.chrome(m.calendarTitle(), -1), b.String())
+	return rows
 }
 
 func (m Model) mailTitle() string {
@@ -496,7 +520,7 @@ func (m Model) calendarRow(index int, e calendar.Event) string {
 	timeWidth := 20
 	organizerWidth := 0
 	if e.Organizer != "" && width >= 84 {
-		organizerWidth = minInt(16, width/5)
+		organizerWidth = minInt(32, maxInt(20, width/4))
 	}
 	subjectWidth := width - timeWidth - 3
 	if organizerWidth > 0 {
@@ -676,6 +700,40 @@ func (m Model) detailHeight() int {
 		return height
 	}
 	return 1
+}
+
+func (m Model) listHeight() int {
+	if m.height <= 0 {
+		return 20
+	}
+	if height := m.height - 6; height > 0 {
+		return height
+	}
+	return 1
+}
+
+func (m Model) listRange(total, focus int) (int, int) {
+	if total == 0 {
+		return 0, 0
+	}
+	height := m.listHeight()
+	if total <= height {
+		return 0, total
+	}
+	if focus < 0 {
+		focus = 0
+	}
+	if focus >= total {
+		focus = total - 1
+	}
+	start := focus - height + 1
+	if start < 0 {
+		start = 0
+	}
+	if maxStart := total - height; start > maxStart {
+		start = maxStart
+	}
+	return start, start + height
 }
 
 func (m Model) maxDetailOffset() int {

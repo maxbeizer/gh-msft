@@ -104,7 +104,8 @@ without color. Colors adapt to light or dark terminals and Lip Gloss falls back
 to the same readable text hierarchy on terminals without color support. Narrow
 terminals use compact panels and two-line inbox rows to preserve message context.
 On wider terminals, list panels use the available width so longer calendar and
-message details remain easy to scan.
+message details remain easy to scan. Lists stay within the terminal height, and
+`j` / `k` keeps the selected row visible while navigating.
 
 | Key                    | Action                                      |
 | ---------------------- | ------------------------------------------- |

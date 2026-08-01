@@ -731,6 +731,75 @@ func TestPanelsUseAvailableTerminalWidth(t *testing.T) {
 	}
 }
 
+func TestListsStayWithinTerminalHeightAndKeepSelectionVisible(t *testing.T) {
+	events := make([]calendar.Event, 12)
+	for i := range events {
+		events[i] = calendar.Event{
+			ID:      fmt.Sprintf("event-%d", i),
+			Subject: fmt.Sprintf("Event %d", i),
+			Start:   mstime.Parse(fmt.Sprintf("2026-01-%02dT09:00:00Z", i+1)),
+			End:     mstime.Parse(fmt.Sprintf("2026-01-%02dT10:00:00Z", i+1)),
+		}
+	}
+	m := New(&fakeProvider{}, len(events), false)
+	m.mode = calendarMode
+	m, _ = m.update(eventsLoadedMsg{events})
+	m, _ = m.update(tea.WindowSizeMsg{Width: 120, Height: 12})
+	m.cursor = len(events) - 1
+
+	out := m.View()
+	if strings.Contains(out, "Event 0") {
+		t.Errorf("calendar viewport should not render off-screen events:\n%s", out)
+	}
+	if !strings.Contains(out, "Event 11") {
+		t.Errorf("calendar viewport should keep the selected event visible:\n%s", out)
+	}
+	if lines := len(strings.Split(strings.TrimSuffix(out, "\n"), "\n")); lines > m.height {
+		t.Errorf("calendar View() rendered %d lines, want <= terminal height %d:\n%s", lines, m.height, out)
+	}
+}
+
+func TestMailListViewportKeepsSelectionVisible(t *testing.T) {
+	messages := make([]mail.Message, 12)
+	for i := range messages {
+		messages[i] = mail.Message{
+			ID:       fmt.Sprintf("message-%d", i),
+			Subject:  fmt.Sprintf("Message %d", i),
+			From:     mail.Address{Name: "Sender"},
+			Received: mstime.Parse(fmt.Sprintf("2026-01-%02dT09:00:00Z", i+1)),
+		}
+	}
+	m := New(&fakeProvider{}, len(messages), false)
+	m, _ = m.update(messagesLoadedMsg{messages})
+	m, _ = m.update(tea.WindowSizeMsg{Width: 120, Height: 12})
+	m.cursor = len(messages) - 1
+
+	out := m.View()
+	if strings.Contains(out, "Message 0") {
+		t.Errorf("mail viewport should not render off-screen messages:\n%s", out)
+	}
+	if !strings.Contains(out, "Message 11") {
+		t.Errorf("mail viewport should keep the selected message visible:\n%s", out)
+	}
+}
+
+func TestWideCalendarRowsKeepUsefulMetadata(t *testing.T) {
+	m := Model{width: 160}
+	event := calendar.Event{
+		Subject:   "Planning the next iteration without hiding the event title",
+		Organizer: "maxbeizer@github.com",
+		Start:     mstime.Parse("2026-01-02T09:00:00Z"),
+		End:       mstime.Parse("2026-01-02T10:00:00Z"),
+	}
+
+	out := m.calendarRow(0, event)
+	for _, want := range []string{event.Subject, event.Organizer} {
+		if !strings.Contains(out, want) {
+			t.Errorf("wide calendar row missing %q:\n%s", want, out)
+		}
+	}
+}
+
 func TestNoColorFallbackRemainsReadable(t *testing.T) {
 	profile := lipgloss.ColorProfile()
 	lipgloss.SetColorProfile(termenv.Ascii)
