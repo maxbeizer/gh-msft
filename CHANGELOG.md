@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org).
 
 ### Added
 
+- Calendar events in the interactive TUI now open into a scrollable detail view
+  with description, organizer, attendees, location, and explicit meeting and
+  Outlook link availability. `j` opens the supported
+  `onlineMeeting.joinUrl`; `o` opens the event `webLink`.
 - `gh msft mail view <message-id>` displays a message's metadata and safe
   plain-text body, with `--json` for clean scriptable output.
 - A cohesive, adaptive visual design system for the interactive TUI, including

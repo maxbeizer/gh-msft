@@ -8,11 +8,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"html"
-	"regexp"
 	"strings"
 
 	"github.com/maxbeizer/gh-msft/internal/mstime"
+	"github.com/maxbeizer/gh-msft/internal/plaintext"
 	"github.com/maxbeizer/gh-msft/internal/workiq"
 )
 
@@ -160,7 +159,7 @@ func (p *WorkIQProvider) GetDetail(ctx context.Context, id string) (Detail, erro
 	}
 	body := gm.Body.Content
 	if strings.EqualFold(gm.Body.ContentType, "html") {
-		body = htmlToText(body)
+		body = plaintext.HTMLToText(body)
 	}
 	return NewDetail(messageFromGraph(gm), body), nil
 }
@@ -213,30 +212,7 @@ func (p *WorkIQProvider) Body(ctx context.Context, id string) (string, error) {
 	}
 	content := gm.Body.Content
 	if strings.EqualFold(gm.Body.ContentType, "html") {
-		content = htmlToText(content)
+		content = plaintext.HTMLToText(content)
 	}
 	return content, nil
-}
-
-var (
-	htmlScriptStyleRE = regexp.MustCompile(`(?is)<(script|style)[^>]*>.*?</(script|style)>`)
-	htmlBreakRE       = regexp.MustCompile(`(?i)<(br|/p|/div|/tr|/li|/h[1-6])[^>]*>`)
-	htmlTagRE         = regexp.MustCompile(`(?s)<[^>]+>`)
-	htmlBlankRE       = regexp.MustCompile(`\n{3,}`)
-)
-
-// htmlToText turns an HTML mail body into readable plain text.
-func htmlToText(s string) string {
-	s = htmlScriptStyleRE.ReplaceAllString(s, "")
-	s = htmlBreakRE.ReplaceAllString(s, "\n")
-	s = htmlTagRE.ReplaceAllString(s, "")
-	s = html.UnescapeString(s)
-	s = strings.ReplaceAll(s, "\r", "")
-	lines := strings.Split(s, "\n")
-	for i, ln := range lines {
-		lines[i] = strings.TrimRight(ln, " \t")
-	}
-	s = strings.Join(lines, "\n")
-	s = htmlBlankRE.ReplaceAllString(s, "\n\n")
-	return strings.TrimSpace(s)
 }

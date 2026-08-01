@@ -117,15 +117,19 @@ message details remain easy to scan. Lists stay within the terminal height, and
 | `g` / `G` or home/end  | jump to top / bottom of a list or message   |
 | `tab`                  | switch mail / calendar                      |
 | `a`                    | archive selected message (mail only)        |
-| `enter`                | open selected message; close an open message |
+| `enter`                | open selected mail or calendar event; close detail |
 | `esc` / `?`            | dismiss / toggle expanded help               |
 | `r`                    | toggle read state (visual only; mail only)  |
 | `R`                    | refresh current view or retry after an error |
 | `q`                    | quit, or close an open message               |
 
 Open messages use `j` / `k`, arrow keys, `g`, and `G` to scroll their full
-contents. Their footer lists the detail-specific bindings; list footers and
-expanded help list only bindings that apply to the active mail or calendar mode.
+contents. Open calendar events show their description, participants, location,
+and available links. Press `j` to join through `onlineMeeting.joinUrl` (the
+preferred meeting link) and `o` to open the Outlook event when its `webLink` is
+available. Missing links and browser-launch failures remain visible in the event
+detail view. Detail footers, list footers, and expanded help list only bindings
+that apply to the active view.
 
 Mail rows show selection, unread state, sender, subject, and received time. The
 header identifies whether the TUI is showing Inbox or all mail, and list columns

@@ -52,8 +52,11 @@ func (f *fakeProvider) Archive(ctx context.Context, id string) error {
 }
 
 type fakeCal struct {
-	events []calendar.Event
-	err    error
+	events    []calendar.Event
+	err       error
+	detail    calendar.Detail
+	detailErr error
+	detailIDs []string
 }
 
 func (f *fakeCal) Upcoming(ctx context.Context, top int) ([]calendar.Event, error) {
@@ -61,6 +64,14 @@ func (f *fakeCal) Upcoming(ctx context.Context, top int) ([]calendar.Event, erro
 		return nil, f.err
 	}
 	return f.events, nil
+}
+
+func (f *fakeCal) GetDetail(ctx context.Context, id string) (calendar.Detail, error) {
+	f.detailIDs = append(f.detailIDs, id)
+	if f.detailErr != nil {
+		return calendar.Detail{}, f.detailErr
+	}
+	return f.detail, nil
 }
 
 func (f *fakeProvider) Body(ctx context.Context, id string) (string, error) {
@@ -396,6 +407,185 @@ func TestEnterOnEmptyInboxIsNoOp(t *testing.T) {
 	}
 	if cmd != nil {
 		t.Error("enter on empty inbox should be a no-op")
+	}
+}
+
+func TestEnterOpensCalendarEventAndBrowserActions(t *testing.T) {
+	fc := &fakeCal{
+		events: sampleEvents(),
+		detail: calendar.Detail{
+			Subject:   "Standup",
+			Start:     mstime.Parse("2026-01-02T15:00:00Z"),
+			End:       mstime.Parse("2026-01-02T15:15:00Z"),
+			Organizer: calendar.Participant{Name: "Alice", Email: "alice@example.com"},
+			Attendees: []calendar.Participant{{Name: "Bob", Email: "bob@example.com"}},
+			Location:  "Room 1",
+			Body:      "Agenda",
+			JoinURL:   "https://teams.microsoft.com/l/meetup-join/standup",
+			WebLink:   "https://outlook.office.com/calendar/standup",
+		},
+	}
+	var opened []string
+	m := New(&fakeProvider{}, 10, false)
+	m.cal = fc
+	m.openURL = func(rawURL string) error {
+		opened = append(opened, rawURL)
+		return nil
+	}
+	m.mode = calendarMode
+	m, _ = m.update(eventsLoadedMsg{sampleEvents()})
+
+	m, cmd := m.update(key("enter"))
+	if !m.viewing || !m.viewingEvent || !m.eventLoading {
+		t.Fatal("enter should open a loading calendar detail view")
+	}
+	if cmd == nil {
+		t.Fatal("enter should fetch event detail")
+	}
+	msg := cmd()
+	detailMsg, ok := msg.(eventDetailLoadedMsg)
+	if !ok {
+		t.Fatalf("expected eventDetailLoadedMsg, got %T", msg)
+	}
+	if detailMsg.request != m.eventRequest {
+		t.Errorf("detail request = %d, want %d", detailMsg.request, m.eventRequest)
+	}
+	m, _ = m.update(detailMsg)
+	if m.eventLoading || len(fc.detailIDs) != 1 || fc.detailIDs[0] != "e1" {
+		t.Errorf("detail loading state = %v, ids = %v", m.eventLoading, fc.detailIDs)
+	}
+
+	for _, want := range []string{"Organizer: Alice <alice@example.com>", "Attendees: Bob <bob@example.com>", "Location: Room 1", "Agenda", "Meeting link: available"} {
+		if !strings.Contains(m.View(), want) {
+			t.Errorf("calendar detail missing %q; got:\n%s", want, m.View())
+		}
+	}
+
+	m, cmd = m.update(key("j"))
+	if cmd == nil {
+		t.Fatal("j should open the online-meeting join link")
+	}
+	m, _ = m.update(cmd())
+	if len(opened) != 1 || opened[0] != fc.detail.JoinURL {
+		t.Errorf("opened URLs = %v", opened)
+	}
+	if !strings.Contains(m.View(), "Opened meeting link in your browser.") {
+		t.Errorf("success status missing; got:\n%s", m.View())
+	}
+
+	m, cmd = m.update(key("o"))
+	if cmd == nil {
+		t.Fatal("o should open the Outlook web link")
+	}
+	m, _ = m.update(cmd())
+	if len(opened) != 2 || opened[1] != fc.detail.WebLink {
+		t.Errorf("opened URLs = %v", opened)
+	}
+}
+
+func TestStaleEventDetailResultsAreIgnored(t *testing.T) {
+	m := New(&fakeProvider{}, 10, false)
+	m.cal = &fakeCal{events: sampleEvents()}
+	m.mode = calendarMode
+	m, _ = m.update(eventsLoadedMsg{sampleEvents()})
+
+	m, _ = m.update(key("enter"))
+	firstRequest := m.eventRequest
+	m, _ = m.update(key("esc"))
+	m.cursor = 1
+	m, _ = m.update(key("enter"))
+	secondRequest := m.eventRequest
+	if secondRequest == firstRequest {
+		t.Fatal("each event detail request must have a new request id")
+	}
+
+	m, _ = m.update(eventDetailLoadedMsg{
+		request: firstRequest,
+		detail:  calendar.Detail{Subject: "Stale event"},
+	})
+	m, _ = m.update(eventDetailErrMsg{request: firstRequest, err: errors.New("stale failure")})
+	if !m.viewing || !m.eventLoading || m.eventDetail.Subject != "" || m.err != nil {
+		t.Fatalf("stale detail changed active view: %+v", m)
+	}
+
+	m, _ = m.update(eventDetailLoadedMsg{
+		request: secondRequest,
+		detail:  calendar.Detail{Subject: "Current event"},
+	})
+	if m.eventLoading || m.eventDetail.Subject != "Current event" {
+		t.Errorf("current detail = %+v, loading = %v", m.eventDetail, m.eventLoading)
+	}
+}
+
+func TestEventDetailCommandScopesErrorsToRequest(t *testing.T) {
+	wantErr := errors.New("event unavailable")
+	msg := eventDetailCmd(&fakeCal{detailErr: wantErr}, "e1", 7)()
+	got, ok := msg.(eventDetailErrMsg)
+	if !ok {
+		t.Fatalf("expected eventDetailErrMsg, got %T", msg)
+	}
+	if got.request != 7 || !errors.Is(got.err, wantErr) {
+		t.Errorf("event detail error = %+v, want request 7 with %v", got, wantErr)
+	}
+}
+
+func TestCalendarDetailMissingAndFailedLinksSurfaceStatus(t *testing.T) {
+	tests := []struct {
+		name       string
+		detail     calendar.Detail
+		openURL    func(string) error
+		key        string
+		wantStatus string
+		wantCmd    bool
+	}{
+		{
+			name:       "missing meeting link",
+			detail:     calendar.Detail{Subject: "Offline"},
+			key:        "j",
+			wantStatus: "This event has no meeting link.",
+		},
+		{
+			name:   "browser launch failure",
+			detail: calendar.Detail{Subject: "Planning", JoinURL: "https://teams.microsoft.com/l/meetup-join/abc"},
+			openURL: func(string) error {
+				return errors.New("browser unavailable")
+			},
+			key:        "j",
+			wantStatus: "Could not open meeting link: browser unavailable",
+			wantCmd:    true,
+		},
+		{
+			name:       "missing Outlook link",
+			detail:     calendar.Detail{Subject: "Planning"},
+			key:        "o",
+			wantStatus: "This event has no Outlook event.",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := New(&fakeProvider{}, 10, false)
+			m.loading = false
+			m.viewing = true
+			m.viewingEvent = true
+			m.eventDetail = tt.detail
+			if tt.openURL != nil {
+				m.openURL = tt.openURL
+			}
+
+			m, cmd := m.update(key(tt.key))
+			if (cmd != nil) != tt.wantCmd {
+				t.Fatalf("command = %v, want command %v", cmd != nil, tt.wantCmd)
+			}
+			if cmd != nil {
+				m, _ = m.update(cmd())
+			}
+			if m.status != tt.wantStatus {
+				t.Errorf("status = %q, want %q", m.status, tt.wantStatus)
+			}
+			if !strings.Contains(m.View(), tt.wantStatus) {
+				t.Errorf("detail view missing status %q; got:\n%s", tt.wantStatus, m.View())
+			}
+		})
 	}
 }
 
