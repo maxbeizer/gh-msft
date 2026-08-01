@@ -32,7 +32,7 @@ func newMailListCmd(factory Factory) *cobra.Command {
 				return err
 			}
 			defer cleanup()
-			sp.setMessage("Loading inbox…")
+			sp.setMessages(inboxLoadingMessages...)
 			msgs, err := providers.Mail.ListInbox(cmd.Context(), top, all)
 			sp.stopSpinner()
 			if err != nil {
@@ -73,7 +73,7 @@ func newMailArchiveCmd(factory Factory) *cobra.Command {
 				return err
 			}
 			defer cleanup()
-			sp.setMessage("Archiving…")
+			sp.setMessages("Archiving…")
 			for _, id := range ids {
 				if err := providers.Mail.Archive(cmd.Context(), id); err != nil {
 					sp.stopSpinner()

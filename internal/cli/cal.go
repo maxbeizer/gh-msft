@@ -7,6 +7,24 @@ import (
 	"github.com/spf13/cobra"
 )
 
+var (
+	workIQStartupMessages = []string{
+		"Starting WorkIQ (first startup can take a few seconds; later commands reuse it)…",
+		"Waking up WorkIQ…",
+		"Getting WorkIQ ready…",
+	}
+	inboxLoadingMessages = []string{
+		"Loading inbox…",
+		"Sorting the inbox…",
+		"Checking for fresh mail…",
+	}
+	calendarLoadingMessages = []string{
+		"Loading calendar…",
+		"Checking the calendar tea leaves…",
+		"Finding upcoming events…",
+	}
+)
+
 func newCalCmd(factory Factory) *cobra.Command {
 	var top int
 	var asJSON bool
@@ -20,7 +38,7 @@ func newCalCmd(factory Factory) *cobra.Command {
 				return err
 			}
 			defer cleanup()
-			sp.setMessage("Loading calendar…")
+			sp.setMessages(calendarLoadingMessages...)
 			events, err := providers.Cal.Upcoming(cmd.Context(), top)
 			sp.stopSpinner()
 			if err != nil {
@@ -40,7 +58,7 @@ func newCalCmd(factory Factory) *cobra.Command {
 // stderr isn't a terminal); callers should update its message for subsequent slow
 // steps and call stopSpinner before writing output.
 func build(cmd *cobra.Command, factory Factory) (*Providers, func(), *spinner, error) {
-	sp := newSpinner(cmd.ErrOrStderr(), "Starting WorkIQ (first startup can take a few seconds; later commands reuse it)…")
+	sp := newSpinner(cmd.ErrOrStderr(), workIQStartupMessages...)
 	if factory == nil {
 		return nil, func() {}, sp, fmt.Errorf("no provider factory configured")
 	}

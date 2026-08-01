@@ -36,7 +36,9 @@ then later invocations reuse its authenticated WorkIQ connection. The broker lis
 only on `127.0.0.1`, requires a random token stored in a user-only state file, and
 stores no Microsoft credentials. It shuts down on termination signals; the next
 command automatically replaces stale state, unavailable endpoints, or an older
-broker protocol.
+broker protocol. On an interactive terminal, concise progress messages rotate while
+WorkIQ starts and while inbox or calendar data loads. Scripted commands and JSON
+output remain free of progress text.
 
 To compare cold and warm startup on your machine:
 

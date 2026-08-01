@@ -18,19 +18,25 @@ type spinner struct {
 	w       io.Writer
 	enabled bool
 
-	mu      sync.Mutex
-	msg     string
-	stop    chan struct{}
-	done    chan struct{}
-	started bool
+	mu       sync.Mutex
+	messages []string
+	stop     chan struct{}
+	done     chan struct{}
+	started  bool
 }
 
 var spinnerFrames = []rune{'⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'}
 
+const framesPerMessage = 20
+
 // newSpinner returns a spinner writing to w. It is enabled only when w is (or
 // wraps) an interactive terminal, which we detect via os.Stderr.
-func newSpinner(w io.Writer, msg string) *spinner {
-	return &spinner{w: w, msg: msg, enabled: isTerminal(w)}
+func newSpinner(w io.Writer, messages ...string) *spinner {
+	return newSpinnerWithTerminal(w, isTerminal(w), messages...)
+}
+
+func newSpinnerWithTerminal(w io.Writer, enabled bool, messages ...string) *spinner {
+	return &spinner{w: w, enabled: enabled, messages: messages}
 }
 
 func isTerminal(w io.Writer) bool {
@@ -64,9 +70,7 @@ func (s *spinner) run() {
 		case <-s.stop:
 			return
 		case <-ticker.C:
-			s.mu.Lock()
-			msg := s.msg
-			s.mu.Unlock()
+			msg := s.messageAt(frame)
 			elapsed := time.Since(start).Truncate(time.Second)
 			fmt.Fprintf(s.w, "\r\033[K%c %s (%s)", spinnerFrames[frame%len(spinnerFrames)], msg, elapsed)
 			frame++
@@ -74,14 +78,25 @@ func (s *spinner) run() {
 	}
 }
 
-// setMessage updates the text shown next to the spinner.
-func (s *spinner) setMessage(msg string) {
+// setMessages updates the messages shown next to the spinner. The spinner cycles
+// through the supplied messages on a fixed cadence, keeping progress copy
+// deterministic for both users and tests.
+func (s *spinner) setMessages(messages ...string) {
 	if s == nil {
 		return
 	}
 	s.mu.Lock()
-	s.msg = msg
+	s.messages = messages
 	s.mu.Unlock()
+}
+
+func (s *spinner) messageAt(frame int) string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.messages) == 0 {
+		return ""
+	}
+	return s.messages[(frame/framesPerMessage)%len(s.messages)]
 }
 
 // stopSpinner halts animation and clears the line. Safe to call multiple times or

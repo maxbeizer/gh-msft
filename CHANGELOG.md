@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org).
 
 - Running `gh msft` without a subcommand now launches the interactive inbox and
   calendar TUI, matching `gh msft tui`.
+- Interactive WorkIQ startup and inbox/calendar loading now use deterministic,
+  rotating progress messages while leaving scripted and JSON output clean.
 
 ## [0.3.0] - 2026-08-01
 
