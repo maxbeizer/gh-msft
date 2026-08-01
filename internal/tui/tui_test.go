@@ -120,6 +120,28 @@ func TestNavigationClamps(t *testing.T) {
 	}
 }
 
+func TestNavigationSupportsArrowKeys(t *testing.T) {
+	m := New(&fakeProvider{}, 10, false)
+	m, _ = m.update(messagesLoadedMsg{sampleMessages()})
+
+	m, _ = m.update(tea.KeyMsg{Type: tea.KeyDown})
+	if m.cursor != 1 {
+		t.Errorf("down arrow: cursor = %d, want 1", m.cursor)
+	}
+	m, _ = m.update(tea.KeyMsg{Type: tea.KeyHome})
+	if m.cursor != 0 {
+		t.Errorf("home: cursor = %d, want 0", m.cursor)
+	}
+	m, _ = m.update(tea.KeyMsg{Type: tea.KeyEnd})
+	if m.cursor != 2 {
+		t.Errorf("end: cursor = %d, want 2", m.cursor)
+	}
+	m, _ = m.update(tea.KeyMsg{Type: tea.KeyUp})
+	if m.cursor != 1 {
+		t.Errorf("up arrow: cursor = %d, want 1", m.cursor)
+	}
+}
+
 func TestArchiveKeyReturnsCommandAndArchivedRemoves(t *testing.T) {
 	fp := &fakeProvider{}
 	m := New(fp, 10, false)
@@ -388,6 +410,83 @@ func TestDetailViewKeysClose(t *testing.T) {
 	}
 }
 
+func TestDetailViewSupportsVimAndArrowScrolling(t *testing.T) {
+	fp := &fakeProvider{body: strings.Repeat("line\n", 30)}
+	m := New(fp, 10, false)
+	m, _ = m.update(tea.WindowSizeMsg{Width: 80, Height: 8})
+	m, _ = m.update(messagesLoadedMsg{sampleMessages()})
+	m, cmd := m.update(key("enter"))
+	m, _ = m.update(cmd())
+
+	m, _ = m.update(key("j"))
+	if m.detailOffset != 1 {
+		t.Errorf("j: detailOffset = %d, want 1", m.detailOffset)
+	}
+	m, _ = m.update(tea.KeyMsg{Type: tea.KeyDown})
+	if m.detailOffset != 2 {
+		t.Errorf("down arrow: detailOffset = %d, want 2", m.detailOffset)
+	}
+	m, _ = m.update(key("G"))
+	if m.detailOffset != m.maxDetailOffset() {
+		t.Errorf("G: detailOffset = %d, want %d", m.detailOffset, m.maxDetailOffset())
+	}
+	m, _ = m.update(tea.KeyMsg{Type: tea.KeyHome})
+	if m.detailOffset != 0 {
+		t.Errorf("home: detailOffset = %d, want 0", m.detailOffset)
+	}
+	m, _ = m.update(tea.KeyMsg{Type: tea.KeyEnd})
+	m, _ = m.update(tea.KeyMsg{Type: tea.KeyUp})
+	if m.detailOffset != m.maxDetailOffset()-1 {
+		t.Errorf("up arrow: detailOffset = %d, want %d", m.detailOffset, m.maxDetailOffset()-1)
+	}
+}
+
+func TestDetailViewQClosesWithoutQuitting(t *testing.T) {
+	m := New(&fakeProvider{}, 10, false)
+	m, _ = m.update(messagesLoadedMsg{sampleMessages()})
+	m, _ = m.update(key("enter"))
+	m, _ = m.update(key("q"))
+	if m.viewing {
+		t.Error("q should close the detail view")
+	}
+	if m.quitting {
+		t.Error("q should not quit from the detail view")
+	}
+}
+
+func TestRefreshClearsError(t *testing.T) {
+	m := New(&fakeProvider{}, 10, false)
+	m, _ = m.update(errMsg{errors.New("boom")})
+	m, cmd := m.update(key("R"))
+	if m.err != nil {
+		t.Error("R should clear an error while retrying")
+	}
+	if !m.loading {
+		t.Error("R should mark the model as loading")
+	}
+	if cmd == nil {
+		t.Error("R should return a reload command")
+	}
+}
+
+func TestContextualHelpMatchesMode(t *testing.T) {
+	m := New(&fakeProvider{}, 10, false)
+	m, _ = m.update(messagesLoadedMsg{sampleMessages()})
+	m, _ = m.update(key("?"))
+	if !strings.Contains(m.View(), "a archive") {
+		t.Error("mail help should include archive")
+	}
+
+	m.mode = calendarMode
+	if strings.Contains(m.footer(), "a archive") {
+		t.Error("calendar help should not include mail actions")
+	}
+	m, _ = m.update(tea.KeyMsg{Type: tea.KeyEsc})
+	if m.showHelp {
+		t.Error("esc should dismiss expanded help")
+	}
+}
+
 func TestDetailViewBodyErrorSurfaces(t *testing.T) {
 	fp := &fakeProvider{bodyErr: errors.New("boom")}
 	m := New(fp, 10, false)
@@ -499,7 +598,7 @@ func TestRenderedStatesUseDesignSystem(t *testing.T) {
 		{
 			name:  "error",
 			model: Model{err: errors.New("connection refused"), width: 100},
-			want:  []string{"gh msft", "Error", "connection refused", "Press q to quit."},
+			want:  []string{"gh msft", "Error", "connection refused", "Help: R retry · q quit"},
 		},
 		{
 			name:  "message detail",

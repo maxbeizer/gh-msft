@@ -87,18 +87,21 @@ without color. Colors adapt to light or dark terminals and Lip Gloss falls back
 to the same readable text hierarchy on terminals without color support. Narrow
 terminals use compact panels and two-line inbox rows to preserve message context.
 
-| Key        | Action                          |
-| ---------- | ------------------------------- |
-| `j` / `k`  | move down / up (also arrows)    |
-| `g` / `G`  | jump to top / bottom            |
-| `tab`      | switch mail / calendar          |
-| `a`        | archive selected message (mail) |
-| `enter`    | open selected message           |
-| `esc`      | close open message              |
-| `r`        | toggle read state (visual only) |
-| `R`        | refresh current view            |
-| `?`        | toggle help                     |
-| `q`        | quit                            |
+| Key                    | Action                                      |
+| ---------------------- | ------------------------------------------- |
+| `j` / `k` or `↑` / `↓` | move down / up in mail and calendar lists   |
+| `g` / `G` or home/end  | jump to top / bottom of a list or message   |
+| `tab`                  | switch mail / calendar                      |
+| `a`                    | archive selected message (mail only)        |
+| `enter`                | open selected message; close an open message |
+| `esc` / `?`            | dismiss / toggle expanded help               |
+| `r`                    | toggle read state (visual only; mail only)  |
+| `R`                    | refresh current view or retry after an error |
+| `q`                    | quit, or close an open message               |
+
+Open messages use `j` / `k`, arrow keys, `g`, and `G` to scroll their full
+contents. Their footer lists the detail-specific bindings; list footers and
+expanded help list only bindings that apply to the active mail or calendar mode.
 
 ## Why this over WorkIQ directly?
 

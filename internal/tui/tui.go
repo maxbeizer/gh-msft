@@ -53,9 +53,10 @@ type Model struct {
 	showHelp bool
 	quitting bool
 
-	viewing     bool
-	body        string
-	bodyLoading bool
+	viewing      bool
+	body         string
+	bodyLoading  bool
+	detailOffset int
 
 	width  int
 	height int
@@ -156,6 +157,7 @@ func (m Model) update(msg tea.Msg) (Model, tea.Cmd) {
 	case bodyLoadedMsg:
 		m.body = msg.body
 		m.bodyLoading = false
+		m.clampDetailOffset()
 		return m, nil
 
 	case errMsg:
@@ -177,25 +179,22 @@ func (m Model) update(msg tea.Msg) (Model, tea.Cmd) {
 }
 
 func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd) {
+	if msg.String() == "ctrl+c" {
+		m.quitting = true
+		return m, tea.Quit
+	}
 	if m.viewing {
-		switch msg.String() {
-		case "ctrl+c":
-			m.quitting = true
-			return m, tea.Quit
-		case "esc", "enter", "q", "backspace":
-			m.viewing = false
-			m.body = ""
-			m.bodyLoading = false
-			return m, nil
-		}
-		return m, nil
+		return m.handleDetailKey(msg)
 	}
 	switch msg.String() {
-	case "ctrl+c", "q":
+	case "q":
 		m.quitting = true
 		return m, tea.Quit
 	case "?":
 		m.showHelp = !m.showHelp
+		return m, nil
+	case "esc":
+		m.showHelp = false
 		return m, nil
 	case "tab":
 		m.toggleMode()
@@ -213,6 +212,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 		m.viewing = true
 		m.bodyLoading = true
 		m.body = ""
+		m.detailOffset = 0
 		m.status = ""
 		return m, bodyCmd(m.provider, sel.ID)
 	case "j", "down":
@@ -243,11 +243,33 @@ func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 		return m, archiveCmd(m.provider, sel.ID)
 	case "R":
 		m.loading = true
+		m.err = nil
 		m.status = "refreshing…"
 		if m.mode == calendarMode {
 			return m, m.loadEventsCmd()
 		}
 		return m, m.loadCmd()
+	}
+	return m, nil
+}
+
+func (m Model) handleDetailKey(msg tea.KeyMsg) (Model, tea.Cmd) {
+	switch msg.String() {
+	case "esc", "enter", "q", "backspace":
+		m.viewing = false
+		m.body = ""
+		m.bodyLoading = false
+		m.detailOffset = 0
+	case "j", "down":
+		m.detailOffset++
+		m.clampDetailOffset()
+	case "k", "up":
+		m.detailOffset--
+		m.clampDetailOffset()
+	case "g", "home":
+		m.detailOffset = 0
+	case "G", "end":
+		m.detailOffset = m.maxDetailOffset()
 	}
 	return m, nil
 }
@@ -294,6 +316,15 @@ func (m *Model) clampCursor() {
 	}
 	if m.cursor < 0 {
 		m.cursor = 0
+	}
+}
+
+func (m *Model) clampDetailOffset() {
+	if m.detailOffset < 0 {
+		m.detailOffset = 0
+	}
+	if max := m.maxDetailOffset(); m.detailOffset > max {
+		m.detailOffset = max
 	}
 }
 
@@ -435,16 +466,27 @@ func (m Model) footer() string {
 	}
 	var phrases []string
 	if m.showHelp {
-		phrases = []string{
-			"j/k move", "enter open", "a archive", "r toggle read", "R refresh",
-			"g/G top/bottom", "tab mail/calendar", "? help", "q quit",
-		}
+		phrases = strings.Split(m.expandedHelp(), " · ")
 	} else {
-		phrases = []string{"enter open", "tab switch", "? help", "q quit"}
+		phrases = strings.Split(m.compactHelp(), " · ")
 	}
 	b.WriteString(styles.help.Render("Help: " + wrapPhrases(phrases, m.listWidth()-6)))
 	b.WriteString("\n")
 	return b.String()
+}
+
+func (m Model) compactHelp() string {
+	if m.mode == calendarMode {
+		return "j/k move · tab switch · ? help · q quit"
+	}
+	return "j/k move · enter open · tab switch · ? help · q quit"
+}
+
+func (m Model) expandedHelp() string {
+	if m.mode == calendarMode {
+		return "j/k or ↑/↓ move · g/G or home/end top/bottom · R refresh · tab mail · ?/esc close help · q quit"
+	}
+	return "j/k or ↑/↓ move · g/G or home/end top/bottom · enter open · a archive · r toggle read · R refresh · tab calendar · ?/esc close help · q quit"
 }
 
 // detailView renders the body of the selected message.
@@ -455,33 +497,62 @@ func (m Model) detailView() string {
 	}
 
 	var b strings.Builder
-	width := m.listWidth()
-	b.WriteString(styles.header.Render(truncate(sel.Subject, width)))
-	b.WriteString("\n\n")
-	if !sel.Received.IsZero() {
-		b.WriteString(styles.metadata.Render("Received: " + sel.Received.Time.Local().Format("Jan 02 15:04")))
-		b.WriteString("\n")
+	lines := m.detailLines()
+	m.clampDetailOffset()
+	end := m.detailOffset + m.detailHeight()
+	if end > len(lines) {
+		end = len(lines)
 	}
-	b.WriteString(styles.metadata.Render(truncate("From: "+formatAddr(sel.From), width)))
+	b.WriteString(strings.Join(lines[m.detailOffset:end], "\n"))
 	b.WriteString("\n")
-	b.WriteString(styles.metadata.Render(truncate("To: "+formatAddrs(sel.To), width)))
-	b.WriteString("\n")
-	b.WriteString("\n")
-	switch {
-	case m.bodyLoading:
-		b.WriteString(styles.loading.Render("Loading message…"))
-		b.WriteString("\n")
-	case m.body == "":
-		b.WriteString(styles.empty.Render("This message has no body."))
-		b.WriteString("\n")
-	default:
-		b.WriteString(lipgloss.NewStyle().Width(width).Render(m.body))
-		b.WriteString("\n")
-	}
-	b.WriteString("\n")
-	b.WriteString(styles.help.Render("Help: esc/enter back · ctrl+c quit"))
+	b.WriteString(styles.help.Render("Help: j/k or ↑/↓ scroll · g/G top/bottom · esc/enter/q back · ctrl+c quit"))
 	b.WriteString("\n")
 	return m.screen(m.chrome("Message", -1), b.String())
+}
+
+func (m Model) detailLines() []string {
+	sel := m.selected()
+	if sel == nil {
+		return []string{"No message."}
+	}
+
+	width := m.listWidth()
+	lines := []string{styles.header.Render(truncate(sel.Subject, width)), ""}
+	if !sel.Received.IsZero() {
+		lines = append(lines, styles.metadata.Render("Received: "+sel.Received.Time.Local().Format("Jan 02 15:04")))
+	}
+	lines = append(lines,
+		styles.metadata.Render(truncate("From: "+formatAddr(sel.From), width)),
+		styles.metadata.Render(truncate("To: "+formatAddrs(sel.To), width)),
+		"",
+	)
+	switch {
+	case m.bodyLoading:
+		lines = append(lines, styles.loading.Render("Loading message…"))
+	case m.body == "":
+		lines = append(lines, styles.empty.Render("This message has no body."))
+	default:
+		lines = append(lines, strings.Split(lipgloss.NewStyle().Width(width).Render(m.body), "\n")...)
+	}
+	return lines
+}
+
+func (m Model) detailHeight() int {
+	if m.height <= 0 {
+		return 20
+	}
+	if height := m.height - 6; height > 0 {
+		return height
+	}
+	return 1
+}
+
+func (m Model) maxDetailOffset() int {
+	max := len(m.detailLines()) - m.detailHeight()
+	if max < 0 {
+		return 0
+	}
+	return max
 }
 
 func formatAddr(a mail.Address) string {
@@ -547,14 +618,15 @@ func (m Model) loadingView() string {
 	} else if m.all {
 		message = "Loading all mail…"
 	}
-	return m.screen(m.chrome(m.modeTitle(), -1), styles.loading.Render(message))
+	content := styles.loading.Render(message) + "\n\n" + styles.help.Render("Help: R refresh · q quit")
+	return m.screen(m.chrome(m.modeTitle(), -1), content)
 }
 
 func (m Model) errorView() string {
 	width := m.listWidth()
 	content := styles.error.Render("Error") + "\n" +
 		lipgloss.NewStyle().Width(width).Render(m.err.Error()) + "\n\n" +
-		styles.help.Render("Press q to quit.")
+		styles.help.Render("Help: R retry · q quit")
 	return styles.app.Render(m.chrome("Error", -1)+"\n"+m.errorPanel(content)) + "\n"
 }
 

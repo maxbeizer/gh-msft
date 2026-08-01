@@ -17,6 +17,10 @@ and this project adheres to [Semantic Versioning](https://semver.org).
   calendar TUI, matching `gh msft tui`.
 - Interactive WorkIQ startup and inbox/calendar loading now use deterministic,
   rotating progress messages while leaving scripted and JSON output clean.
+- Vim-style `j`/`k` and `g`/`G` navigation is now consistent across mail,
+  calendar, and scrollable message details, while preserving arrow-key and
+  home/end alternatives. Contextual footers and expanded help now reflect the
+  active mode, including loading and error recovery controls.
 
 ## [0.3.0] - 2026-08-01
 
