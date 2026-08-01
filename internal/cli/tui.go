@@ -1,11 +1,10 @@
 package cli
 
 import (
-	"github.com/maxbeizer/gh-msft/internal/tui"
 	"github.com/spf13/cobra"
 )
 
-func newTUICmd(factory Factory) *cobra.Command {
+func newTUICmd(factory Factory, runTUI tuiRunner) *cobra.Command {
 	var top int
 	var startCal bool
 	var mailAll bool
@@ -20,7 +19,7 @@ func newTUICmd(factory Factory) *cobra.Command {
 			}
 			defer cleanup()
 			sp.stopSpinner()
-			return tui.Run(providers.Mail, providers.Cal, top, mailAll, startCal)
+			return runTUI(providers.Mail, providers.Cal, top, mailAll, startCal)
 		},
 	}
 	cmd.Flags().IntVar(&top, "top", 50, "maximum number of items to load")

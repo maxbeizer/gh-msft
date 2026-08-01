@@ -78,6 +78,81 @@ func run(t *testing.T, factory Factory, args ...string) (string, error) {
 	return buf.String(), err
 }
 
+func TestRootCmdNoArgsLaunchesTUI(t *testing.T) {
+	var gotTop int
+	var gotAll, gotStartCal bool
+	runTUI := func(_ mail.Provider, _ calendar.Provider, top int, all bool, startCal bool) error {
+		gotTop = top
+		gotAll = all
+		gotStartCal = startCal
+		return nil
+	}
+	root := newRootCmd(factoryFor(&fakeMail{}, &fakeCal{}), runTUI)
+	root.SetArgs(nil)
+
+	if err := root.ExecuteContext(context.Background()); err != nil {
+		t.Fatalf("run root command: %v", err)
+	}
+	if gotTop != 50 || gotAll || gotStartCal {
+		t.Errorf("TUI options = top:%d all:%t startCal:%t, want top:50 all:false startCal:false", gotTop, gotAll, gotStartCal)
+	}
+}
+
+func TestRootCmdExplicitSubcommandsDoNotLaunchTUI(t *testing.T) {
+	tuiCalled := false
+	runTUI := func(mail.Provider, calendar.Provider, int, bool, bool) error {
+		tuiCalled = true
+		return nil
+	}
+	root := newRootCmd(factoryFor(&fakeMail{}, &fakeCal{}), runTUI)
+	root.SetArgs([]string{"mail", "list"})
+
+	if err := root.ExecuteContext(context.Background()); err != nil {
+		t.Fatalf("run mail list: %v", err)
+	}
+	if tuiCalled {
+		t.Error("TUI launched for explicit mail subcommand")
+	}
+}
+
+func TestRootCmdHelpAndCompletionDoNotLaunchTUI(t *testing.T) {
+	for _, args := range [][]string{{"--help"}, {"help"}, {"completion", "bash"}} {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			tuiCalled := false
+			factoryCalled := false
+			runTUI := func(mail.Provider, calendar.Provider, int, bool, bool) error {
+				tuiCalled = true
+				return nil
+			}
+			factory := func(context.Context) (*Providers, error) {
+				factoryCalled = true
+				return nil, errors.New("factory should not be called")
+			}
+			root := newRootCmd(factory, runTUI)
+			root.SetArgs(args)
+
+			if err := root.ExecuteContext(context.Background()); err != nil {
+				t.Fatalf("run %q: %v", args, err)
+			}
+			if tuiCalled || factoryCalled {
+				t.Errorf("%q started TUI=%t factory=%t, want both false", args, tuiCalled, factoryCalled)
+			}
+		})
+	}
+}
+
+func TestRootCmdRejectsPositionalArguments(t *testing.T) {
+	root := newRootCmd(factoryFor(&fakeMail{}, &fakeCal{}), func(mail.Provider, calendar.Provider, int, bool, bool) error {
+		t.Fatal("TUI launched with positional arguments")
+		return nil
+	})
+	root.SetArgs([]string{"unexpected"})
+
+	if err := root.ExecuteContext(context.Background()); err == nil {
+		t.Fatal("expected positional arguments to be rejected")
+	}
+}
+
 func TestMailListTable(t *testing.T) {
 	fm := &fakeMail{inbox: []mail.Message{
 		{ID: "1", Subject: "Hello world", From: mail.Address{Name: "Alice"}, IsRead: false, Received: mstime.Parse("2026-07-17T21:36:12Z")},

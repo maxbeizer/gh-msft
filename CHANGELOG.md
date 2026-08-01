@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org).
 
 ## [Unreleased]
 
+### Added
+
+- Running `gh msft` without a subcommand now launches the interactive inbox and
+  calendar TUI, matching `gh msft tui`.
+
 ## [0.3.0] - 2026-08-01
 
 ### Added

@@ -60,6 +60,7 @@ gh extension install maxbeizer/gh-msft
 ## Usage
 
 ```bash
+gh msft                           # interactive inbox and calendar
 gh msft mail list                 # recent inbox messages
 gh msft mail list --all           # include all mail, not just the inbox
 gh msft mail list --top 50 --json # machine-readable output
@@ -68,11 +69,11 @@ gh msft mail list --json | jq -r '.[].id' | gh msft mail archive --stdin
 gh msft cal                       # upcoming calendar events
 gh msft cal --json                # machine-readable output
 gh msft accept-eula               # accept the WorkIQ EULA (run once)
-gh msft tui                       # interactive inbox
+gh msft tui                       # interactive inbox and calendar
 gh msft tui --cal                 # start in calendar mode
 ```
 
-### Interactive inbox (`gh msft tui`)
+### Interactive inbox (`gh msft` or `gh msft tui`)
 
 The TUI has two modes: mail (inbox) and calendar (upcoming events). Press
 `tab` to switch, or start in calendar mode with `--cal`.
