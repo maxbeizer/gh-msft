@@ -11,10 +11,18 @@ and this project adheres to [Semantic Versioning](https://semver.org).
 
 - `gh msft mail view <message-id>` displays a message's metadata and safe
   plain-text body, with `--json` for clean scriptable output.
+- A cohesive, adaptive visual design system for the interactive TUI, including
+  consistent app chrome, panels, headers, selections, unread indicators,
+  metadata, status, help, loading, and failure states. Narrow and no-color
+  terminals retain textual state markers and readable layouts.
 - Running `gh msft` without a subcommand now launches the interactive inbox and
   calendar TUI, matching `gh msft tui`.
 - Interactive WorkIQ startup and inbox/calendar loading now use deterministic,
   rotating progress messages while leaving scripted and JSON output clean.
+- Vim-style `j`/`k` and `g`/`G` navigation is now consistent across mail,
+  calendar, and scrollable message details, while preserving arrow-key and
+  home/end alternatives. Contextual footers and expanded help now reflect the
+  active mode, including loading and error recovery controls.
 
 ## [0.3.0] - 2026-08-01
 

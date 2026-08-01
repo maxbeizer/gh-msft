@@ -7,9 +7,11 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/maxbeizer/gh-msft/internal/calendar"
 	"github.com/maxbeizer/gh-msft/internal/mail"
 	"github.com/maxbeizer/gh-msft/internal/mstime"
+	"github.com/muesli/termenv"
 )
 
 type fakeProvider struct {
@@ -124,6 +126,28 @@ func TestNavigationClamps(t *testing.T) {
 	m, _ = m.update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("g")})
 	if m.cursor != 0 {
 		t.Errorf("g: cursor = %d, want 0", m.cursor)
+	}
+}
+
+func TestNavigationSupportsArrowKeys(t *testing.T) {
+	m := New(&fakeProvider{}, 10, false)
+	m, _ = m.update(messagesLoadedMsg{sampleMessages()})
+
+	m, _ = m.update(tea.KeyMsg{Type: tea.KeyDown})
+	if m.cursor != 1 {
+		t.Errorf("down arrow: cursor = %d, want 1", m.cursor)
+	}
+	m, _ = m.update(tea.KeyMsg{Type: tea.KeyHome})
+	if m.cursor != 0 {
+		t.Errorf("home: cursor = %d, want 0", m.cursor)
+	}
+	m, _ = m.update(tea.KeyMsg{Type: tea.KeyEnd})
+	if m.cursor != 2 {
+		t.Errorf("end: cursor = %d, want 2", m.cursor)
+	}
+	m, _ = m.update(tea.KeyMsg{Type: tea.KeyUp})
+	if m.cursor != 1 {
+		t.Errorf("up arrow: cursor = %d, want 1", m.cursor)
 	}
 }
 
@@ -395,6 +419,83 @@ func TestDetailViewKeysClose(t *testing.T) {
 	}
 }
 
+func TestDetailViewSupportsVimAndArrowScrolling(t *testing.T) {
+	fp := &fakeProvider{body: strings.Repeat("line\n", 30)}
+	m := New(fp, 10, false)
+	m, _ = m.update(tea.WindowSizeMsg{Width: 80, Height: 8})
+	m, _ = m.update(messagesLoadedMsg{sampleMessages()})
+	m, cmd := m.update(key("enter"))
+	m, _ = m.update(cmd())
+
+	m, _ = m.update(key("j"))
+	if m.detailOffset != 1 {
+		t.Errorf("j: detailOffset = %d, want 1", m.detailOffset)
+	}
+	m, _ = m.update(tea.KeyMsg{Type: tea.KeyDown})
+	if m.detailOffset != 2 {
+		t.Errorf("down arrow: detailOffset = %d, want 2", m.detailOffset)
+	}
+	m, _ = m.update(key("G"))
+	if m.detailOffset != m.maxDetailOffset() {
+		t.Errorf("G: detailOffset = %d, want %d", m.detailOffset, m.maxDetailOffset())
+	}
+	m, _ = m.update(tea.KeyMsg{Type: tea.KeyHome})
+	if m.detailOffset != 0 {
+		t.Errorf("home: detailOffset = %d, want 0", m.detailOffset)
+	}
+	m, _ = m.update(tea.KeyMsg{Type: tea.KeyEnd})
+	m, _ = m.update(tea.KeyMsg{Type: tea.KeyUp})
+	if m.detailOffset != m.maxDetailOffset()-1 {
+		t.Errorf("up arrow: detailOffset = %d, want %d", m.detailOffset, m.maxDetailOffset()-1)
+	}
+}
+
+func TestDetailViewQClosesWithoutQuitting(t *testing.T) {
+	m := New(&fakeProvider{}, 10, false)
+	m, _ = m.update(messagesLoadedMsg{sampleMessages()})
+	m, _ = m.update(key("enter"))
+	m, _ = m.update(key("q"))
+	if m.viewing {
+		t.Error("q should close the detail view")
+	}
+	if m.quitting {
+		t.Error("q should not quit from the detail view")
+	}
+}
+
+func TestRefreshClearsError(t *testing.T) {
+	m := New(&fakeProvider{}, 10, false)
+	m, _ = m.update(errMsg{errors.New("boom")})
+	m, cmd := m.update(key("R"))
+	if m.err != nil {
+		t.Error("R should clear an error while retrying")
+	}
+	if !m.loading {
+		t.Error("R should mark the model as loading")
+	}
+	if cmd == nil {
+		t.Error("R should return a reload command")
+	}
+}
+
+func TestContextualHelpMatchesMode(t *testing.T) {
+	m := New(&fakeProvider{}, 10, false)
+	m, _ = m.update(messagesLoadedMsg{sampleMessages()})
+	m, _ = m.update(key("?"))
+	if !strings.Contains(m.View(), "a archive") {
+		t.Error("mail help should include archive")
+	}
+
+	m.mode = calendarMode
+	if strings.Contains(m.footer(), "a archive") {
+		t.Error("calendar help should not include mail actions")
+	}
+	m, _ = m.update(tea.KeyMsg{Type: tea.KeyEsc})
+	if m.showHelp {
+		t.Error("esc should dismiss expanded help")
+	}
+}
+
 func TestDetailViewBodyErrorSurfaces(t *testing.T) {
 	fp := &fakeProvider{bodyErr: errors.New("boom")}
 	m := New(fp, 10, false)
@@ -447,9 +548,9 @@ func TestSubjectWidthTracksResize(t *testing.T) {
 		width int
 		want  int
 	}{
-		{"unset falls back", 0, 50},
-		{"narrow clamps to min", 20, 10},
-		{"wide grows", 120, 93},
+		{"unset falls back", 0, 43},
+		{"narrow clamps to min", 20, 8},
+		{"wide grows", 120, 83},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -479,5 +580,84 @@ func TestResizeShowsMoreSubject(t *testing.T) {
 	}
 	if !strings.Contains(wide, long) {
 		t.Error("wide view should show the full subject")
+	}
+}
+
+func TestRenderedStatesUseDesignSystem(t *testing.T) {
+	tests := []struct {
+		name  string
+		model Model
+		want  []string
+	}{
+		{
+			name:  "mail list",
+			model: Model{messages: sampleMessages(), mailLoaded: true, width: 100},
+			want:  []string{"gh msft", "[Mail]", "Inbox (3)", "NEW", "> "},
+		},
+		{
+			name:  "calendar list",
+			model: Model{mode: calendarMode, events: sampleEvents(), calLoaded: true, width: 100},
+			want:  []string{"gh msft", "[Calendar]", "Calendar (2)", "Standup", "Help:"},
+		},
+		{
+			name:  "loading",
+			model: Model{loading: true, width: 100},
+			want:  []string{"gh msft", "Loading inbox…"},
+		},
+		{
+			name:  "error",
+			model: Model{err: errors.New("connection refused"), width: 100},
+			want:  []string{"gh msft", "Error", "connection refused", "Help: R retry · q quit"},
+		},
+		{
+			name:  "message detail",
+			model: Model{messages: sampleMessages(), mailLoaded: true, viewing: true, body: "Message body", width: 100},
+			want:  []string{"gh msft", "Message", "First", "From: Alice", "Message body", "Help:"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			out := tt.model.View()
+			for _, want := range tt.want {
+				if !strings.Contains(out, want) {
+					t.Errorf("View() missing %q; got:\n%s", want, out)
+				}
+			}
+		})
+	}
+}
+
+func TestNarrowViewRetainsTextualStateIndicators(t *testing.T) {
+	m := New(&fakeProvider{}, 10, false)
+	m, _ = m.update(messagesLoadedMsg{sampleMessages()})
+	m, _ = m.update(tea.WindowSizeMsg{Width: 30, Height: 24})
+
+	out := m.View()
+	for _, want := range []string{"gh msft · Inbox (3)", "NEW", "> ", "Help:"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("narrow View() missing %q; got:\n%s", want, out)
+		}
+	}
+	for _, line := range strings.Split(strings.TrimSuffix(out, "\n"), "\n") {
+		if got := lipgloss.Width(line); got > 30 {
+			t.Errorf("narrow line width = %d, want <= 30: %q", got, line)
+		}
+	}
+}
+
+func TestNoColorFallbackRemainsReadable(t *testing.T) {
+	profile := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.Ascii)
+	t.Cleanup(func() { lipgloss.SetColorProfile(profile) })
+
+	m := Model{messages: sampleMessages(), mailLoaded: true, width: 100}
+	out := m.View()
+	if strings.Contains(out, "\x1b[") {
+		t.Errorf("ASCII color profile should not emit ANSI colors; got:\n%s", out)
+	}
+	for _, want := range []string{"[Mail]", "NEW", "> ", "Help:"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("no-color View() missing %q; got:\n%s", want, out)
+		}
 	}
 }
