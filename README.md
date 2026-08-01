@@ -1,12 +1,48 @@
 # gh-msft
 
-> [!WARNING]
-> Currently a spike. Not sure if this will be worth it. API subject to change
-
 A [GitHub CLI](https://cli.github.com/) extension to read and triage your
 Microsoft 365 **mail and calendar** from the terminal.
 
-## How it works (auth)
+> [!NOTE]
+> Experimental, useful, and evolving quickly. Commands and output shapes documented
+> below are the supported surface; the underlying WorkIQ integration may change.
+
+Your Microsoft 365 inbox and calendar, where `gh` belongs: keyboard-first when
+you are at a terminal, deterministic when you need a script.
+
+## Start here
+
+```bash
+gh extension install maxbeizer/gh-msft
+gh msft accept-eula  # run once to accept the WorkIQ EULA
+gh msft              # open the interactive inbox and calendar
+```
+
+The first command that reads Microsoft 365 may take a few seconds while WorkIQ
+starts. Later commands reuse the local connection.
+
+Here is a deliberately synthetic preview of the TUI--no real message or
+calendar data is used:
+
+```text
+gh msft                                             [mail]  calendar
+Inbox                                               3 messages
+> NEW  Avery Chen        Project update             10:42 AM
+      Contoso Newsletter  August engineering news    9:15 AM
+      Morgan Lee          Lunch next week?           Yesterday
+
+j/k move  enter open  a archive  tab switch  R refresh  ? help  q quit
+```
+
+## Why this instead of WorkIQ chat?
+
+| WorkIQ chat | `gh-msft` |
+| --- | --- |
+| Ask natural-language questions about Microsoft 365 | Browse mail and upcoming events in a focused terminal UI |
+| Conversational answers | Deterministic, scriptable commands for pipes and automation |
+| Uses LLM-backed chat | Calls the Microsoft Graph proxy directly, without LLM latency |
+
+## Setup and authentication
 
 `gh-msft` performs **no authentication of its own** and stores **no credentials**.
 It rides [WorkIQ](https://github.com/microsoft/work-iq): a user-local broker keeps
@@ -29,7 +65,8 @@ By default the broker launches `npx -y @microsoft/workiq@latest mcp`. Override w
 - `WORKIQ_DIRECT_PROCESS=1` — bypass the broker and launch a private WorkIQ process
   for this command. Use this for diagnosis or when a local broker cannot start.
 
-### WorkIQ broker lifecycle
+<details>
+<summary>How the local WorkIQ broker works</summary>
 
 The first mail or calendar command starts a broker in your user cache directory,
 then later invocations reuse its authenticated WorkIQ connection. The broker listens
@@ -52,6 +89,8 @@ If the broker repeatedly fails, run one command with
 `WORKIQ_DIRECT_PROCESS=1` to distinguish a WorkIQ problem from a broker problem.
 Remove the `gh-msft` directory under your system user cache directory only after
 all `gh msft` commands have exited; the next invocation recreates it.
+
+</details>
 
 ## Installation
 
@@ -77,6 +116,20 @@ gh msft cal --json                # machine-readable output
 gh msft accept-eula               # accept the WorkIQ EULA (run once)
 gh msft tui                       # interactive inbox and calendar
 gh msft tui --cal                 # start in calendar mode
+```
+
+### Recipes
+
+```bash
+# Read the next three calendar events as JSON.
+gh msft cal --top 3 --json | jq '.[] | {subject, start, organizer}'
+
+# Find the most recent message ID, then inspect its plain-text body.
+gh msft mail list --top 1 --json | jq -r '.[0].id' | xargs gh msft mail view
+
+# Archive every message selected by an external filter.
+gh msft mail list --json | jq -r '.[] | select(.from.email | endswith("@news.example")) | .id' \
+  | gh msft mail archive --stdin
 ```
 
 ### Machine-readable output
@@ -136,13 +189,6 @@ header identifies whether the TUI is showing Inbox or all mail, and list columns
 compact intentionally on narrow terminals. Calendar events are grouped by start
 day; all-day events, same-day meetings, and multi-day events use distinct time
 labels so upcoming commitments remain easy to scan.
-
-## Why this over WorkIQ directly?
-
-WorkIQ's chat answers questions about your mail. `gh-msft` adds what a chat can't:
-a fast **interactive TUI inbox**, **deterministic scriptable commands** (pipe to
-`jq`, chain with other `gh` commands), and **no LLM latency** — the Graph proxy is
-called directly.
 
 ## Development
 

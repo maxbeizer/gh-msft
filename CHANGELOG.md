@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org).
 
 ## [Unreleased]
 
+### Changed
+
+- Refreshed the README with a quick-start path, a synthetic TUI preview that does
+  not expose account data, a WorkIQ comparison, practical command recipes, and
+  collapsed broker implementation details.
+
 ## [0.4.0] - 2026-08-01
 
 ### Added
