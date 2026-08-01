@@ -10,17 +10,19 @@ import (
 
 // OpenURL opens rawURL in the default browser without invoking a shell.
 func OpenURL(rawURL string) error {
-	name, args, err := commandForURL(runtime.GOOS, rawURL)
+	return openURL(runtime.GOOS, rawURL, func(name string, args ...string) error {
+		return exec.Command(name, args...).Run()
+	})
+}
+
+func openURL(goos, rawURL string, run func(string, ...string) error) error {
+	name, args, err := commandForURL(goos, rawURL)
 	if err != nil {
 		return err
 	}
-	cmd := exec.Command(name, args...)
-	if err := cmd.Start(); err != nil {
+	if err := run(name, args...); err != nil {
 		return fmt.Errorf("open browser: %w", err)
 	}
-	go func() {
-		_ = cmd.Wait()
-	}()
 	return nil
 }
 

@@ -446,10 +446,14 @@ func TestEnterOpensCalendarEventAndBrowserActions(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected eventDetailLoadedMsg, got %T", msg)
 	}
+	if detailMsg.request != m.eventRequest {
+		t.Errorf("detail request = %d, want %d", detailMsg.request, m.eventRequest)
+	}
 	m, _ = m.update(detailMsg)
 	if m.eventLoading || len(fc.detailIDs) != 1 || fc.detailIDs[0] != "e1" {
 		t.Errorf("detail loading state = %v, ids = %v", m.eventLoading, fc.detailIDs)
 	}
+
 	for _, want := range []string{"Organizer: Alice <alice@example.com>", "Attendees: Bob <bob@example.com>", "Location: Room 1", "Agenda", "Meeting link: available"} {
 		if !strings.Contains(m.View(), want) {
 			t.Errorf("calendar detail missing %q; got:\n%s", want, m.View())
@@ -475,6 +479,52 @@ func TestEnterOpensCalendarEventAndBrowserActions(t *testing.T) {
 	m, _ = m.update(cmd())
 	if len(opened) != 2 || opened[1] != fc.detail.WebLink {
 		t.Errorf("opened URLs = %v", opened)
+	}
+}
+
+func TestStaleEventDetailResultsAreIgnored(t *testing.T) {
+	m := New(&fakeProvider{}, 10, false)
+	m.cal = &fakeCal{events: sampleEvents()}
+	m.mode = calendarMode
+	m, _ = m.update(eventsLoadedMsg{sampleEvents()})
+
+	m, _ = m.update(key("enter"))
+	firstRequest := m.eventRequest
+	m, _ = m.update(key("esc"))
+	m.cursor = 1
+	m, _ = m.update(key("enter"))
+	secondRequest := m.eventRequest
+	if secondRequest == firstRequest {
+		t.Fatal("each event detail request must have a new request id")
+	}
+
+	m, _ = m.update(eventDetailLoadedMsg{
+		request: firstRequest,
+		detail:  calendar.Detail{Subject: "Stale event"},
+	})
+	m, _ = m.update(eventDetailErrMsg{request: firstRequest, err: errors.New("stale failure")})
+	if !m.viewing || !m.eventLoading || m.eventDetail.Subject != "" || m.err != nil {
+		t.Fatalf("stale detail changed active view: %+v", m)
+	}
+
+	m, _ = m.update(eventDetailLoadedMsg{
+		request: secondRequest,
+		detail:  calendar.Detail{Subject: "Current event"},
+	})
+	if m.eventLoading || m.eventDetail.Subject != "Current event" {
+		t.Errorf("current detail = %+v, loading = %v", m.eventDetail, m.eventLoading)
+	}
+}
+
+func TestEventDetailCommandScopesErrorsToRequest(t *testing.T) {
+	wantErr := errors.New("event unavailable")
+	msg := eventDetailCmd(&fakeCal{detailErr: wantErr}, "e1", 7)()
+	got, ok := msg.(eventDetailErrMsg)
+	if !ok {
+		t.Fatalf("expected eventDetailErrMsg, got %T", msg)
+	}
+	if got.request != 7 || !errors.Is(got.err, wantErr) {
+		t.Errorf("event detail error = %+v, want request 7 with %v", got, wantErr)
 	}
 }
 

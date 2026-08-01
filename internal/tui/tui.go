@@ -23,7 +23,14 @@ type bodyLoadedMsg struct {
 	id   string
 	body string
 }
-type eventDetailLoadedMsg struct{ detail calendar.Detail }
+type eventDetailLoadedMsg struct {
+	request uint
+	detail  calendar.Detail
+}
+type eventDetailErrMsg struct {
+	request uint
+	err     error
+}
 type urlOpenedMsg struct{ label string }
 type urlOpenErrMsg struct {
 	label string
@@ -66,6 +73,7 @@ type Model struct {
 	bodyLoading  bool
 	eventDetail  calendar.Detail
 	eventLoading bool
+	eventRequest uint
 	detailOffset int
 	openURL      func(string) error
 
@@ -134,16 +142,16 @@ func bodyCmd(provider mail.Provider, id string) tea.Cmd {
 	}
 }
 
-func eventDetailCmd(provider calendar.Provider, id string) tea.Cmd {
+func eventDetailCmd(provider calendar.Provider, id string, request uint) tea.Cmd {
 	return func() tea.Msg {
 		if provider == nil {
-			return errMsg{fmt.Errorf("calendar details are unavailable")}
+			return eventDetailErrMsg{request: request, err: fmt.Errorf("calendar details are unavailable")}
 		}
 		detail, err := provider.GetDetail(context.Background(), id)
 		if err != nil {
-			return errMsg{err}
+			return eventDetailErrMsg{request: request, err: err}
 		}
-		return eventDetailLoadedMsg{detail}
+		return eventDetailLoadedMsg{request: request, detail: detail}
 	}
 }
 
@@ -194,9 +202,23 @@ func (m Model) update(msg tea.Msg) (Model, tea.Cmd) {
 		return m, nil
 
 	case eventDetailLoadedMsg:
+		if !m.isActiveEventRequest(msg.request) {
+			return m, nil
+		}
 		m.eventDetail = msg.detail
 		m.eventLoading = false
 		m.clampDetailOffset()
+		return m, nil
+
+	case eventDetailErrMsg:
+		if !m.isActiveEventRequest(msg.request) {
+			return m, nil
+		}
+		m.err = msg.err
+		m.loading = false
+		m.eventLoading = false
+		m.viewing = false
+		m.viewingEvent = false
 		return m, nil
 
 	case urlOpenedMsg:
@@ -262,10 +284,11 @@ func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 			m.viewing = true
 			m.viewingEvent = true
 			m.eventLoading = true
+			m.eventRequest++
 			m.eventDetail = calendar.Detail{}
 			m.detailOffset = 0
 			m.status = ""
-			return m, eventDetailCmd(m.cal, sel.ID)
+			return m, eventDetailCmd(m.cal, sel.ID, m.eventRequest)
 		}
 		sel := m.selected()
 		if sel == nil {
@@ -353,6 +376,10 @@ func (m *Model) closeDetail() {
 	m.eventLoading = false
 	m.detailOffset = 0
 	m.status = ""
+}
+
+func (m Model) isActiveEventRequest(request uint) bool {
+	return m.viewing && m.viewingEvent && m.eventRequest == request
 }
 
 func (m Model) openEventURL(rawURL, label string) (Model, tea.Cmd) {

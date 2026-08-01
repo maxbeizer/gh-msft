@@ -1,6 +1,10 @@
 package browser
 
-import "testing"
+import (
+	"errors"
+	"reflect"
+	"testing"
+)
 
 func TestCommandForURL(t *testing.T) {
 	tests := []struct {
@@ -34,6 +38,34 @@ func TestCommandForURL(t *testing.T) {
 				if arg != tt.wantArgs[i] {
 					t.Errorf("commandForURL() arg %d = %q, want %q", i, arg, tt.wantArgs[i])
 				}
+			}
+		})
+	}
+}
+
+func TestOpenURLPropagatesLauncherResult(t *testing.T) {
+	tests := []struct {
+		name    string
+		runErr  error
+		wantErr bool
+	}{
+		{"successful launcher", nil, false},
+		{"failed launcher", errors.New("exit status 1"), true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var gotName string
+			var gotArgs []string
+			err := openURL("linux", "https://outlook.office.com/calendar/item", func(name string, args ...string) error {
+				gotName = name
+				gotArgs = args
+				return tt.runErr
+			})
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("openURL() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if gotName != "xdg-open" || !reflect.DeepEqual(gotArgs, []string{"https://outlook.office.com/calendar/item"}) {
+				t.Errorf("launcher = %q %v, want xdg-open [https://outlook.office.com/calendar/item]", gotName, gotArgs)
 			}
 		})
 	}
