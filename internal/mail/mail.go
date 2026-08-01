@@ -61,8 +61,8 @@ type Provider interface {
 	// ListInbox returns up to top recent messages, newest first. When all is
 	// false it reads the Inbox folder only; when true it reads all mail folders.
 	ListInbox(ctx context.Context, top int, all bool) ([]Message, error)
-	// GetMessage returns message metadata by id.
-	GetMessage(ctx context.Context, id string) (Message, error)
+	// GetDetail returns message metadata and its plain-text body by id.
+	GetDetail(ctx context.Context, id string) (Detail, error)
 	// Archive moves the message with the given id to the Archive folder.
 	Archive(ctx context.Context, id string) error
 	// Body returns the plain-text body of the message with the given id.
@@ -92,7 +92,11 @@ type graphMessage struct {
 	Subject          string `json:"subject"`
 	ReceivedDateTime string `json:"receivedDateTime"`
 	IsRead           bool   `json:"isRead"`
-	From             struct {
+	Body             struct {
+		ContentType string `json:"contentType"`
+		Content     string `json:"content"`
+	} `json:"body"`
+	From struct {
 		EmailAddress struct {
 			Name    string `json:"name"`
 			Address string `json:"address"`
@@ -137,24 +141,28 @@ func (p *WorkIQProvider) ListInbox(ctx context.Context, top int, all bool) ([]Me
 	return msgs, nil
 }
 
-// GetMessage retrieves the metadata for one message.
-func (p *WorkIQProvider) GetMessage(ctx context.Context, id string) (Message, error) {
+// GetDetail retrieves the metadata and body for one message in a single request.
+func (p *WorkIQProvider) GetDetail(ctx context.Context, id string) (Detail, error) {
 	if id == "" {
-		return Message{}, fmt.Errorf("mail: GetMessage requires a message id")
+		return Detail{}, fmt.Errorf("mail: GetDetail requires a message id")
 	}
-	url := fmt.Sprintf("/me/messages/%s?$select=id,subject,from,toRecipients,receivedDateTime,isRead", id)
+	url := fmt.Sprintf("/me/messages/%s?$select=id,subject,from,toRecipients,receivedDateTime,isRead,body", id)
 	results, err := p.c.Fetch(ctx, url)
 	if err != nil {
-		return Message{}, err
+		return Detail{}, err
 	}
 	if len(results) == 0 {
-		return Message{}, fmt.Errorf("mail: message %q was not found", id)
+		return Detail{}, fmt.Errorf("mail: message %q was not found", id)
 	}
 	var gm graphMessage
 	if err := json.Unmarshal(results[0].Data, &gm); err != nil {
-		return Message{}, fmt.Errorf("mail: decode message: %w", err)
+		return Detail{}, fmt.Errorf("mail: decode message: %w", err)
 	}
-	return messageFromGraph(gm), nil
+	body := gm.Body.Content
+	if strings.EqualFold(gm.Body.ContentType, "html") {
+		body = htmlToText(body)
+	}
+	return NewDetail(messageFromGraph(gm), body), nil
 }
 
 func messageFromGraph(gm graphMessage) Message {
@@ -187,14 +195,6 @@ func (p *WorkIQProvider) Archive(ctx context.Context, id string) error {
 	return err
 }
 
-// graphBody mirrors the body of a single Microsoft Graph message.
-type graphBody struct {
-	Body struct {
-		ContentType string `json:"contentType"`
-		Content     string `json:"content"`
-	} `json:"body"`
-}
-
 func (p *WorkIQProvider) Body(ctx context.Context, id string) (string, error) {
 	if id == "" {
 		return "", fmt.Errorf("mail: Body requires a message id")
@@ -207,12 +207,12 @@ func (p *WorkIQProvider) Body(ctx context.Context, id string) (string, error) {
 	if len(results) == 0 {
 		return "", nil
 	}
-	var gb graphBody
-	if err := json.Unmarshal(results[0].Data, &gb); err != nil {
+	var gm graphMessage
+	if err := json.Unmarshal(results[0].Data, &gm); err != nil {
 		return "", fmt.Errorf("mail: decode body: %w", err)
 	}
-	content := gb.Body.Content
-	if strings.EqualFold(gb.Body.ContentType, "html") {
+	content := gm.Body.Content
+	if strings.EqualFold(gm.Body.ContentType, "html") {
 		content = htmlToText(content)
 	}
 	return content, nil

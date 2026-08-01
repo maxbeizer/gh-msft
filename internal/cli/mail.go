@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/maxbeizer/gh-msft/internal/mail"
 	"github.com/spf13/cobra"
 )
 
@@ -64,15 +63,11 @@ func newMailViewCmd(factory Factory) *cobra.Command {
 			sp.setMessages("Fetching message…")
 			defer sp.stopSpinner()
 
-			message, err := providers.Mail.GetMessage(cmd.Context(), args[0])
+			detail, err := providers.Mail.GetDetail(cmd.Context(), args[0])
 			if err != nil {
 				return fmt.Errorf("getting message %s: %w", args[0], err)
 			}
-			body, err := providers.Mail.Body(cmd.Context(), args[0])
-			if err != nil {
-				return fmt.Errorf("reading body for message %s: %w", args[0], err)
-			}
-			return writeMessageDetail(cmd.OutOrStdout(), mail.NewDetail(message, body), asJSON)
+			return writeMessageDetail(cmd.OutOrStdout(), detail, asJSON)
 		},
 	}
 	cmd.Flags().BoolVar(&asJSON, "json", false, "output as JSON")

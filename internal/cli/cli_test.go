@@ -16,26 +16,23 @@ import (
 type fakeMail struct {
 	inbox      []mail.Message
 	listErr    error
-	message    mail.Message
-	getErr     error
-	getIDs     []string
+	detail     mail.Detail
+	detailErr  error
+	detailIDs  []string
 	archived   []string
 	archiveErr error
-	body       string
-	bodyErr    error
-	bodyIDs    []string
 }
 
 func (f *fakeMail) ListInbox(ctx context.Context, top int, all bool) ([]mail.Message, error) {
 	return f.inbox, f.listErr
 }
 
-func (f *fakeMail) GetMessage(ctx context.Context, id string) (mail.Message, error) {
-	f.getIDs = append(f.getIDs, id)
-	if f.getErr != nil {
-		return mail.Message{}, f.getErr
+func (f *fakeMail) GetDetail(ctx context.Context, id string) (mail.Detail, error) {
+	f.detailIDs = append(f.detailIDs, id)
+	if f.detailErr != nil {
+		return mail.Detail{}, f.detailErr
 	}
-	return f.message, nil
+	return f.detail, nil
 }
 
 func (f *fakeMail) Archive(ctx context.Context, id string) error {
@@ -47,11 +44,7 @@ func (f *fakeMail) Archive(ctx context.Context, id string) error {
 }
 
 func (f *fakeMail) Body(ctx context.Context, id string) (string, error) {
-	f.bodyIDs = append(f.bodyIDs, id)
-	if f.bodyErr != nil {
-		return "", f.bodyErr
-	}
-	return f.body, nil
+	return "", nil
 }
 
 type fakeCal struct {
@@ -242,13 +235,13 @@ func TestMailView(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			fm := &fakeMail{message: message, body: "plain text body"}
+			fm := &fakeMail{detail: mail.NewDetail(message, "plain text body")}
 			out, err := run(t, factoryFor(fm, &fakeCal{}), tt.args...)
 			if err != nil {
 				t.Fatalf("run: %v", err)
 			}
-			if len(fm.getIDs) != 1 || fm.getIDs[0] != "MSG1" || len(fm.bodyIDs) != 1 || fm.bodyIDs[0] != "MSG1" {
-				t.Errorf("provider ids = get:%v body:%v", fm.getIDs, fm.bodyIDs)
+			if len(fm.detailIDs) != 1 || fm.detailIDs[0] != "MSG1" {
+				t.Errorf("provider detail ids = %v", fm.detailIDs)
 			}
 			if tt.asJSON {
 				var got mail.Detail
@@ -283,16 +276,10 @@ func TestMailViewErrors(t *testing.T) {
 			want: "accepts 1 arg(s), received 0",
 		},
 		{
-			name: "metadata provider error",
+			name: "provider error",
 			args: []string{"mail", "view", "MSG1", "--json"},
-			mail: &fakeMail{getErr: errors.New("permission denied")},
+			mail: &fakeMail{detailErr: errors.New("permission denied")},
 			want: "getting message MSG1: permission denied",
-		},
-		{
-			name: "body provider error",
-			args: []string{"mail", "view", "MSG1", "--json"},
-			mail: &fakeMail{message: mail.Message{ID: "MSG1"}, bodyErr: errors.New("not found")},
-			want: "reading body for message MSG1: not found",
 		},
 	}
 	for _, tt := range tests {
@@ -305,6 +292,33 @@ func TestMailViewErrors(t *testing.T) {
 				t.Errorf("stdout = %q, want empty on error", out)
 			}
 		})
+	}
+}
+
+func TestWriteMessageDetailTerminalSafety(t *testing.T) {
+	detail := mail.Detail{
+		Subject: "Notice\x1b]0;unsafe\a",
+		From:    mail.Address{Name: "Sender"},
+		Body:    "hello\x1b]52;c;clipboard\a\nworld",
+	}
+	var human bytes.Buffer
+	if err := writeMessageDetail(&human, detail, false); err != nil {
+		t.Fatalf("write human detail: %v", err)
+	}
+	if strings.ContainsRune(human.String(), '\x1b') || strings.ContainsRune(human.String(), '\a') {
+		t.Errorf("human output contains terminal controls: %q", human.String())
+	}
+
+	var jsonOutput bytes.Buffer
+	if err := writeMessageDetail(&jsonOutput, detail, true); err != nil {
+		t.Fatalf("write JSON detail: %v", err)
+	}
+	var got mail.Detail
+	if err := json.Unmarshal(jsonOutput.Bytes(), &got); err != nil {
+		t.Fatalf("decode JSON detail: %v", err)
+	}
+	if got.Subject != detail.Subject || got.From != detail.From || got.Body != detail.Body {
+		t.Errorf("JSON detail = %+v, want %+v", got, detail)
 	}
 }
 
