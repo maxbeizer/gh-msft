@@ -7,9 +7,11 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/maxbeizer/gh-msft/internal/calendar"
 	"github.com/maxbeizer/gh-msft/internal/mail"
 	"github.com/maxbeizer/gh-msft/internal/mstime"
+	"github.com/muesli/termenv"
 )
 
 type fakeProvider struct {
@@ -537,9 +539,9 @@ func TestSubjectWidthTracksResize(t *testing.T) {
 		width int
 		want  int
 	}{
-		{"unset falls back", 0, 50},
-		{"narrow clamps to min", 20, 10},
-		{"wide grows", 120, 93},
+		{"unset falls back", 0, 43},
+		{"narrow clamps to min", 20, 8},
+		{"wide grows", 120, 83},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -569,5 +571,84 @@ func TestResizeShowsMoreSubject(t *testing.T) {
 	}
 	if !strings.Contains(wide, long) {
 		t.Error("wide view should show the full subject")
+	}
+}
+
+func TestRenderedStatesUseDesignSystem(t *testing.T) {
+	tests := []struct {
+		name  string
+		model Model
+		want  []string
+	}{
+		{
+			name:  "mail list",
+			model: Model{messages: sampleMessages(), mailLoaded: true, width: 100},
+			want:  []string{"gh msft", "[Mail]", "Inbox (3)", "NEW", "> "},
+		},
+		{
+			name:  "calendar list",
+			model: Model{mode: calendarMode, events: sampleEvents(), calLoaded: true, width: 100},
+			want:  []string{"gh msft", "[Calendar]", "Calendar (2)", "Standup", "Help:"},
+		},
+		{
+			name:  "loading",
+			model: Model{loading: true, width: 100},
+			want:  []string{"gh msft", "Loading inbox…"},
+		},
+		{
+			name:  "error",
+			model: Model{err: errors.New("connection refused"), width: 100},
+			want:  []string{"gh msft", "Error", "connection refused", "Help: R retry · q quit"},
+		},
+		{
+			name:  "message detail",
+			model: Model{messages: sampleMessages(), mailLoaded: true, viewing: true, body: "Message body", width: 100},
+			want:  []string{"gh msft", "Message", "First", "From: Alice", "Message body", "Help:"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			out := tt.model.View()
+			for _, want := range tt.want {
+				if !strings.Contains(out, want) {
+					t.Errorf("View() missing %q; got:\n%s", want, out)
+				}
+			}
+		})
+	}
+}
+
+func TestNarrowViewRetainsTextualStateIndicators(t *testing.T) {
+	m := New(&fakeProvider{}, 10, false)
+	m, _ = m.update(messagesLoadedMsg{sampleMessages()})
+	m, _ = m.update(tea.WindowSizeMsg{Width: 30, Height: 24})
+
+	out := m.View()
+	for _, want := range []string{"gh msft · Inbox (3)", "NEW", "> ", "Help:"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("narrow View() missing %q; got:\n%s", want, out)
+		}
+	}
+	for _, line := range strings.Split(strings.TrimSuffix(out, "\n"), "\n") {
+		if got := lipgloss.Width(line); got > 30 {
+			t.Errorf("narrow line width = %d, want <= 30: %q", got, line)
+		}
+	}
+}
+
+func TestNoColorFallbackRemainsReadable(t *testing.T) {
+	profile := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.Ascii)
+	t.Cleanup(func() { lipgloss.SetColorProfile(profile) })
+
+	m := Model{messages: sampleMessages(), mailLoaded: true, width: 100}
+	out := m.View()
+	if strings.Contains(out, "\x1b[") {
+		t.Errorf("ASCII color profile should not emit ANSI colors; got:\n%s", out)
+	}
+	for _, want := range []string{"[Mail]", "NEW", "> ", "Help:"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("no-color View() missing %q; got:\n%s", want, out)
+		}
 	}
 }
