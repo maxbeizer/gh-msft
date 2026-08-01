@@ -14,6 +14,7 @@ func newMailCmd(factory Factory) *cobra.Command {
 		Short: "Read and triage inbox mail",
 	}
 	cmd.AddCommand(newMailListCmd(factory))
+	cmd.AddCommand(newMailViewCmd(factory))
 	cmd.AddCommand(newMailArchiveCmd(factory))
 	return cmd
 }
@@ -44,6 +45,32 @@ func newMailListCmd(factory Factory) *cobra.Command {
 	cmd.Flags().IntVar(&top, "top", 25, "maximum number of messages to list")
 	cmd.Flags().BoolVar(&asJSON, "json", false, "output as JSON")
 	cmd.Flags().BoolVar(&all, "all", false, "list all mail instead of only the inbox")
+	return cmd
+}
+
+func newMailViewCmd(factory Factory) *cobra.Command {
+	var asJSON bool
+	cmd := &cobra.Command{
+		Use:   "view <message-id>",
+		Short: "Show message metadata and body",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			providers, cleanup, sp, err := build(cmd, factory)
+			if err != nil {
+				return err
+			}
+			defer cleanup()
+			sp.setMessages("Fetching message…")
+			defer sp.stopSpinner()
+
+			detail, err := providers.Mail.GetDetail(cmd.Context(), args[0])
+			if err != nil {
+				return fmt.Errorf("getting message %s: %w", args[0], err)
+			}
+			return writeMessageDetail(cmd.OutOrStdout(), detail, asJSON)
+		},
+	}
+	cmd.Flags().BoolVar(&asJSON, "json", false, "output as JSON")
 	return cmd
 }
 

@@ -133,6 +133,43 @@ func TestListInboxMalformedDegradesGracefully(t *testing.T) {
 	}
 }
 
+func TestGetDetailParsesMessageAndBody(t *testing.T) {
+	fg := &fakeGraph{fetchData: `{
+		"id":"AAA1",
+		"subject":"Status update",
+		"isRead":false,
+		"receivedDateTime":"2026-07-17T21:36:12Z",
+		"from":{"emailAddress":{"name":"Ada Lovelace","address":"ada@example.com"}},
+		"toRecipients":[{"emailAddress":{"name":"Grace Hopper","address":"grace@example.com"}}],
+		"body":{"contentType":"html","content":"<p>Plain body</p>"}
+	}`}
+	p := NewWorkIQProvider(fg)
+
+	got, err := p.GetDetail(context.Background(), "AAA1")
+	if err != nil {
+		t.Fatalf("GetDetail: %v", err)
+	}
+	if got.ID != "AAA1" || got.Subject != "Status update" || got.IsRead || got.Body != "Plain body" {
+		t.Errorf("detail = %+v", got)
+	}
+	if got.From.Email != "ada@example.com" || len(got.To) != 1 || got.To[0].Email != "grace@example.com" {
+		t.Errorf("addresses = from:%+v to:%+v", got.From, got.To)
+	}
+	if len(fg.gotFetchURLs) != 1 || !contains(fg.gotFetchURLs[0], "/me/messages/AAA1") {
+		t.Errorf("fetch url = %v", fg.gotFetchURLs)
+	}
+	if !contains(fg.gotFetchURLs[0], "$select=id,subject,from,toRecipients,receivedDateTime,isRead,body") {
+		t.Errorf("fetch url %q did not request metadata and body fields", fg.gotFetchURLs[0])
+	}
+}
+
+func TestGetDetailRequiresID(t *testing.T) {
+	p := NewWorkIQProvider(&fakeGraph{})
+	if _, err := p.GetDetail(context.Background(), ""); err == nil {
+		t.Fatal("expected error for empty id")
+	}
+}
+
 func TestArchiveSendsMoveAction(t *testing.T) {
 	fg := &fakeGraph{}
 	p := NewWorkIQProvider(fg)

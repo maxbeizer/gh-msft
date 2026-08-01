@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org).
 
 ### Added
 
+- `gh msft mail view <message-id>` displays a message's metadata and safe
+  plain-text body, with `--json` for clean scriptable output.
 - A cohesive, adaptive visual design system for the interactive TUI, including
   consistent app chrome, panels, headers, selections, unread indicators,
   metadata, status, help, loading, and failure states. Narrow and no-color

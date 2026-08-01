@@ -32,11 +32,37 @@ type Message struct {
 	IsRead   bool        `json:"isRead"`
 }
 
+// Detail is a message and its plain-text body.
+type Detail struct {
+	ID       string      `json:"id"`
+	Subject  string      `json:"subject"`
+	From     Address     `json:"from"`
+	To       []Address   `json:"to"`
+	Received mstime.Time `json:"received"`
+	IsRead   bool        `json:"isRead"`
+	Body     string      `json:"body"`
+}
+
+// NewDetail combines a message's metadata and body for presentation.
+func NewDetail(m Message, body string) Detail {
+	return Detail{
+		ID:       m.ID,
+		Subject:  m.Subject,
+		From:     m.From,
+		To:       m.To,
+		Received: m.Received,
+		IsRead:   m.IsRead,
+		Body:     body,
+	}
+}
+
 // Provider reads and mutates mail.
 type Provider interface {
 	// ListInbox returns up to top recent messages, newest first. When all is
 	// false it reads the Inbox folder only; when true it reads all mail folders.
 	ListInbox(ctx context.Context, top int, all bool) ([]Message, error)
+	// GetDetail returns message metadata and its plain-text body by id.
+	GetDetail(ctx context.Context, id string) (Detail, error)
 	// Archive moves the message with the given id to the Archive folder.
 	Archive(ctx context.Context, id string) error
 	// Body returns the plain-text body of the message with the given id.
@@ -66,7 +92,11 @@ type graphMessage struct {
 	Subject          string `json:"subject"`
 	ReceivedDateTime string `json:"receivedDateTime"`
 	IsRead           bool   `json:"isRead"`
-	From             struct {
+	Body             struct {
+		ContentType string `json:"contentType"`
+		Content     string `json:"content"`
+	} `json:"body"`
+	From struct {
 		EmailAddress struct {
 			Name    string `json:"name"`
 			Address string `json:"address"`
@@ -106,26 +136,54 @@ func (p *WorkIQProvider) ListInbox(ctx context.Context, top int, all bool) ([]Me
 	}
 	msgs := make([]Message, 0, len(coll.Value))
 	for _, gm := range coll.Value {
-		to := make([]Address, 0, len(gm.ToRecipients))
-		for _, r := range gm.ToRecipients {
-			to = append(to, Address{
-				Name:  r.EmailAddress.Name,
-				Email: r.EmailAddress.Address,
-			})
-		}
-		msgs = append(msgs, Message{
-			ID:      gm.ID,
-			Subject: gm.Subject,
-			From: Address{
-				Name:  gm.From.EmailAddress.Name,
-				Email: gm.From.EmailAddress.Address,
-			},
-			To:       to,
-			Received: mstime.Parse(gm.ReceivedDateTime),
-			IsRead:   gm.IsRead,
-		})
+		msgs = append(msgs, messageFromGraph(gm))
 	}
 	return msgs, nil
+}
+
+// GetDetail retrieves the metadata and body for one message in a single request.
+func (p *WorkIQProvider) GetDetail(ctx context.Context, id string) (Detail, error) {
+	if id == "" {
+		return Detail{}, fmt.Errorf("mail: GetDetail requires a message id")
+	}
+	url := fmt.Sprintf("/me/messages/%s?$select=id,subject,from,toRecipients,receivedDateTime,isRead,body", id)
+	results, err := p.c.Fetch(ctx, url)
+	if err != nil {
+		return Detail{}, err
+	}
+	if len(results) == 0 {
+		return Detail{}, fmt.Errorf("mail: message %q was not found", id)
+	}
+	var gm graphMessage
+	if err := json.Unmarshal(results[0].Data, &gm); err != nil {
+		return Detail{}, fmt.Errorf("mail: decode message: %w", err)
+	}
+	body := gm.Body.Content
+	if strings.EqualFold(gm.Body.ContentType, "html") {
+		body = htmlToText(body)
+	}
+	return NewDetail(messageFromGraph(gm), body), nil
+}
+
+func messageFromGraph(gm graphMessage) Message {
+	to := make([]Address, 0, len(gm.ToRecipients))
+	for _, r := range gm.ToRecipients {
+		to = append(to, Address{
+			Name:  r.EmailAddress.Name,
+			Email: r.EmailAddress.Address,
+		})
+	}
+	return Message{
+		ID:      gm.ID,
+		Subject: gm.Subject,
+		From: Address{
+			Name:  gm.From.EmailAddress.Name,
+			Email: gm.From.EmailAddress.Address,
+		},
+		To:       to,
+		Received: mstime.Parse(gm.ReceivedDateTime),
+		IsRead:   gm.IsRead,
+	}
 }
 
 func (p *WorkIQProvider) Archive(ctx context.Context, id string) error {
@@ -135,14 +193,6 @@ func (p *WorkIQProvider) Archive(ctx context.Context, id string) error {
 	url := fmt.Sprintf("/me/messages/%s/move", id)
 	_, err := p.c.DoAction(ctx, url, map[string]string{"DestinationId": "archive"})
 	return err
-}
-
-// graphBody mirrors the body of a single Microsoft Graph message.
-type graphBody struct {
-	Body struct {
-		ContentType string `json:"contentType"`
-		Content     string `json:"content"`
-	} `json:"body"`
 }
 
 func (p *WorkIQProvider) Body(ctx context.Context, id string) (string, error) {
@@ -157,12 +207,12 @@ func (p *WorkIQProvider) Body(ctx context.Context, id string) (string, error) {
 	if len(results) == 0 {
 		return "", nil
 	}
-	var gb graphBody
-	if err := json.Unmarshal(results[0].Data, &gb); err != nil {
+	var gm graphMessage
+	if err := json.Unmarshal(results[0].Data, &gm); err != nil {
 		return "", fmt.Errorf("mail: decode body: %w", err)
 	}
-	content := gb.Body.Content
-	if strings.EqualFold(gb.Body.ContentType, "html") {
+	content := gm.Body.Content
+	if strings.EqualFold(gm.Body.ContentType, "html") {
 		content = htmlToText(content)
 	}
 	return content, nil
