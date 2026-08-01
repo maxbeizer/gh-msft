@@ -800,6 +800,38 @@ func TestWideCalendarRowsKeepUsefulMetadata(t *testing.T) {
 	}
 }
 
+func TestExpandedHelpStaysWithinTerminalHeight(t *testing.T) {
+	m := New(&fakeProvider{}, 10, false)
+	m, _ = m.update(messagesLoadedMsg{sampleMessages()})
+	m, _ = m.update(tea.WindowSizeMsg{Width: 80, Height: 12})
+	m.showHelp = true
+
+	out := m.View()
+	if lines := len(strings.Split(strings.TrimSuffix(out, "\n"), "\n")); lines > m.height {
+		t.Errorf("expanded help rendered %d lines, want <= terminal height %d:\n%s", lines, m.height, out)
+	}
+}
+
+func TestTruncateRespectsDisplayWidth(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		width int
+		want  string
+	}{
+		{name: "wide rune", input: "界界", width: 3, want: "界…"},
+		{name: "single column", input: "abc", width: 1, want: "…"},
+		{name: "unchanged", input: "hello", width: 5, want: "hello"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := truncate(tt.input, tt.width); got != tt.want {
+				t.Errorf("truncate(%q, %d) = %q, want %q", tt.input, tt.width, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestNoColorFallbackRemainsReadable(t *testing.T) {
 	profile := lipgloss.ColorProfile()
 	lipgloss.SetColorProfile(termenv.Ascii)

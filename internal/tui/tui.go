@@ -495,15 +495,8 @@ func (m Model) mailRow(index int, msg mail.Message) string {
 		return truncate(firstLine, width) + "\n" + truncate(secondLine, width)
 	}
 	senderWidth := minInt(22, maxInt(12, width/4))
-	subjectWidth := maxInt(8, width-senderWidth-21)
-	return truncate(fmt.Sprintf("%s%s %-*s %s %s",
-		cursor,
-		state,
-		senderWidth,
-		truncate(from, senderWidth),
-		truncate(msg.Subject, subjectWidth),
-		receivedDateTime(msg),
-	), width)
+	return truncate(cursor+state+" "+padRight(truncate(from, senderWidth), senderWidth)+" "+
+		truncate(msg.Subject, m.subjectWidth())+" "+receivedDateTime(msg), width)
 }
 
 func (m Model) calendarRow(index int, e calendar.Event) string {
@@ -527,7 +520,8 @@ func (m Model) calendarRow(index int, e calendar.Event) string {
 		subjectWidth -= 3 + organizerWidth
 	}
 	subjectWidth = maxInt(12, subjectWidth)
-	line := fmt.Sprintf("%s%-*s %s", cursor, timeWidth, truncate(eventTimeLabel(e, false), timeWidth), truncate(e.Subject, subjectWidth))
+	line := cursor + padRight(truncate(eventTimeLabel(e, false), timeWidth), timeWidth) + " " +
+		truncate(e.Subject, subjectWidth)
 	if organizerWidth > 0 {
 		line += " " + styles.metadata.Render("· "+truncate(e.Organizer, organizerWidth))
 	}
@@ -706,10 +700,24 @@ func (m Model) listHeight() int {
 	if m.height <= 0 {
 		return 20
 	}
-	if height := m.height - 6; height > 0 {
+	if height := m.height - 6 - m.footerExtraLines(); height > 0 {
 		return height
 	}
 	return 1
+}
+
+func (m Model) footerExtraLines() int {
+	extraLines := 0
+	if m.status != "" {
+		extraLines++
+	}
+	var phrases []string
+	if m.showHelp {
+		phrases = strings.Split(m.expandedHelp(), " · ")
+	} else {
+		phrases = strings.Split(m.compactHelp(), " · ")
+	}
+	return extraLines + strings.Count(wrapPhrases(phrases, m.listWidth()-6), "\n")
 }
 
 func (m Model) listRange(total, focus int) (int, int) {
@@ -771,6 +779,10 @@ func formatAddrs(as []mail.Address) string {
 func (m Model) subjectWidth() int {
 	senderWidth := minInt(22, maxInt(12, m.listWidth()/4))
 	return maxInt(8, m.listWidth()-senderWidth-21)
+}
+
+func padRight(s string, width int) string {
+	return s + strings.Repeat(" ", maxInt(0, width-lipgloss.Width(s)))
 }
 
 func minInt(a, b int) int {
@@ -907,14 +919,23 @@ func truncate(s string, n int) string {
 	if n <= 0 {
 		return ""
 	}
-	runes := []rune(s)
-	if len(runes) <= n {
+	if lipgloss.Width(s) <= n {
 		return s
 	}
 	if n == 1 {
-		return string(runes[:1])
+		return "…"
 	}
-	return string(runes[:n-1]) + "…"
+	var b strings.Builder
+	width := 0
+	for _, r := range s {
+		runeWidth := lipgloss.Width(string(r))
+		if width+runeWidth > n-1 {
+			break
+		}
+		b.WriteRune(r)
+		width += runeWidth
+	}
+	return b.String() + "…"
 }
 
 // Run starts the interactive TUI against the given providers. When all is true
