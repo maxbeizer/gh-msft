@@ -120,6 +120,12 @@ Open messages use `j` / `k`, arrow keys, `g`, and `G` to scroll their full
 contents. Their footer lists the detail-specific bindings; list footers and
 expanded help list only bindings that apply to the active mail or calendar mode.
 
+Mail rows show selection, unread state, sender, subject, and received time. The
+header identifies whether the TUI is showing Inbox or all mail, and list columns
+compact intentionally on narrow terminals. Calendar events are grouped by start
+day; all-day events, same-day meetings, and multi-day events use distinct time
+labels so upcoming commitments remain easy to scan.
+
 ## Why this over WorkIQ directly?
 
 WorkIQ's chat answers questions about your mail. `gh-msft` adds what a chat can't:

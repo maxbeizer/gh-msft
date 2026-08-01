@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -63,9 +64,9 @@ func (f *fakeProvider) Body(ctx context.Context, id string) (string, error) {
 
 func sampleMessages() []mail.Message {
 	return []mail.Message{
-		{ID: "1", Subject: "First", From: mail.Address{Name: "Alice"}, IsRead: false},
-		{ID: "2", Subject: "Second", From: mail.Address{Name: "Bob"}, IsRead: true},
-		{ID: "3", Subject: "Third", From: mail.Address{Name: "Carol"}, IsRead: false},
+		{ID: "1", Subject: "First", From: mail.Address{Name: "Alice"}, Received: mstime.Parse("2026-01-02T15:00:00Z"), IsRead: false},
+		{ID: "2", Subject: "Second", From: mail.Address{Name: "Bob"}, Received: mstime.Parse("2026-01-02T16:00:00Z"), IsRead: true},
+		{ID: "3", Subject: "Third", From: mail.Address{Name: "Carol"}, Received: mstime.Parse("2026-01-02T17:00:00Z"), IsRead: false},
 	}
 }
 
@@ -280,8 +281,8 @@ func TestCalendarViewRendersEvents(t *testing.T) {
 	if !strings.Contains(out, "Standup") {
 		t.Errorf("calendar view missing event subject; got:\n%s", out)
 	}
-	if !strings.Contains(out, " - ") {
-		t.Errorf("calendar view should show start - end range; got:\n%s", out)
+	if !strings.Contains(out, eventTimeLabel(sampleEvents()[0], false)) {
+		t.Errorf("calendar view should show the event time range; got:\n%s", out)
 	}
 	m, _ = m.update(eventsLoadedMsg{nil})
 	_ = m.View() // empty calendar
@@ -539,9 +540,9 @@ func TestSubjectWidthTracksResize(t *testing.T) {
 		width int
 		want  int
 	}{
-		{"unset falls back", 0, 43},
+		{"unset falls back", 0, 35},
 		{"narrow clamps to min", 20, 8},
-		{"wide grows", 120, 83},
+		{"wide grows", 120, 71},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -583,12 +584,12 @@ func TestRenderedStatesUseDesignSystem(t *testing.T) {
 		{
 			name:  "mail list",
 			model: Model{messages: sampleMessages(), mailLoaded: true, width: 100},
-			want:  []string{"gh msft", "[Mail]", "Inbox (3)", "NEW", "> "},
+			want:  []string{"gh msft", "[Mail]", "Inbox · 3 messages · Inbox", "NEW", "> "},
 		},
 		{
 			name:  "calendar list",
 			model: Model{mode: calendarMode, events: sampleEvents(), calLoaded: true, width: 100},
-			want:  []string{"gh msft", "[Calendar]", "Calendar (2)", "Standup", "Help:"},
+			want:  []string{"gh msft", "[Calendar]", "Upcoming · 2 events", "Standup", "Help:"},
 		},
 		{
 			name:  "loading",
@@ -624,7 +625,7 @@ func TestNarrowViewRetainsTextualStateIndicators(t *testing.T) {
 	m, _ = m.update(tea.WindowSizeMsg{Width: 30, Height: 24})
 
 	out := m.View()
-	for _, want := range []string{"gh msft · Inbox (3)", "NEW", "> ", "Help:"} {
+	for _, want := range []string{"gh msft", "NEW", "> ", "Help:"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("narrow View() missing %q; got:\n%s", want, out)
 		}
@@ -632,6 +633,84 @@ func TestNarrowViewRetainsTextualStateIndicators(t *testing.T) {
 	for _, line := range strings.Split(strings.TrimSuffix(out, "\n"), "\n") {
 		if got := lipgloss.Width(line); got > 30 {
 			t.Errorf("narrow line width = %d, want <= 30: %q", got, line)
+		}
+	}
+}
+
+func TestMailViewShowsScanColumnsAndScope(t *testing.T) {
+	m := New(&fakeProvider{}, 10, false)
+	m, _ = m.update(messagesLoadedMsg{sampleMessages()[:1]})
+	m, _ = m.update(tea.WindowSizeMsg{Width: 100, Height: 24})
+
+	out := m.View()
+	for _, want := range []string{"Inbox · 1 message · Inbox", "NEW", "Alice", "First", receivedDateTime(m.messages[0])} {
+		if !strings.Contains(out, want) {
+			t.Errorf("mail view missing %q:\n%s", want, out)
+		}
+	}
+
+	m.all = true
+	out = m.View()
+	if !strings.Contains(out, "All mail") {
+		t.Errorf("all-mail view should identify its scope:\n%s", out)
+	}
+}
+
+func TestCalendarViewGroupsDaysAndShowsEventKinds(t *testing.T) {
+	events := []calendar.Event{
+		{ID: "same-day", Subject: "Planning", Organizer: "Alice", Start: mstime.Parse("2026-01-02T09:00:00Z"), End: mstime.Parse("2026-01-02T10:00:00Z")},
+		{ID: "all-day", Subject: "Conference", IsAllDay: true, Start: mstime.Parse("2026-01-02T00:00:00Z"), End: mstime.Parse("2026-01-03T00:00:00Z")},
+		{ID: "multi-day", Subject: "Offsite", Start: mstime.Parse("2026-01-03T09:00:00Z"), End: mstime.Parse("2026-01-05T17:00:00Z")},
+	}
+	m := New(&fakeProvider{}, 10, false)
+	m.mode = calendarMode
+	m, _ = m.update(eventsLoadedMsg{events})
+	m, _ = m.update(tea.WindowSizeMsg{Width: 100, Height: 24})
+
+	out := m.View()
+	if got := strings.Count(out, calendarDayLabel(events[0])); got != 1 {
+		t.Errorf("calendar should have one section per day, got %d:\n%s", got, out)
+	}
+	for _, want := range []string{"all day", eventTimeLabel(events[0], false), truncate(eventTimeLabel(events[2], false), 20)} {
+		if !strings.Contains(out, want) {
+			t.Errorf("calendar view missing %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestNarrowListViewsFitTerminal(t *testing.T) {
+	tests := []struct {
+		name  string
+		model Model
+	}{
+		{
+			name: "mail",
+			model: func() Model {
+				m := New(&fakeProvider{}, 10, false)
+				m, _ = m.update(messagesLoadedMsg{sampleMessages()[:1]})
+				return m
+			}(),
+		},
+		{
+			name: "calendar",
+			model: func() Model {
+				m := New(&fakeProvider{}, 10, false)
+				m.mode = calendarMode
+				m, _ = m.update(eventsLoadedMsg{sampleEvents()[:1]})
+				return m
+			}(),
+		},
+	}
+	for _, tt := range tests {
+		for _, width := range []int{20, 32} {
+			t.Run(tt.name+"/"+fmt.Sprint(width), func(t *testing.T) {
+				m, _ := tt.model.update(tea.WindowSizeMsg{Width: width, Height: 24})
+				for _, line := range strings.Split(strings.TrimSuffix(m.View(), "\n"), "\n") {
+					if got := lipgloss.Width(line); got > width {
+						t.Errorf("line width = %d, want <= %d: %q", got, width, line)
+					}
+				}
+			})
 		}
 	}
 }
@@ -650,5 +729,18 @@ func TestNoColorFallbackRemainsReadable(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Errorf("no-color View() missing %q; got:\n%s", want, out)
 		}
+	}
+}
+
+func TestLoadingViewIdentifiesActiveScope(t *testing.T) {
+	m := New(&fakeProvider{}, 10, true)
+	m, _ = m.update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	if out := m.View(); !strings.Contains(out, "All mail · Loading…") {
+		t.Errorf("mail loading view missing scope and state:\n%s", out)
+	}
+
+	m.mode = calendarMode
+	if out := m.View(); !strings.Contains(out, "Upcoming · Loading…") {
+		t.Errorf("calendar loading view missing scope and state:\n%s", out)
 	}
 }

@@ -373,13 +373,16 @@ func (m Model) View() string {
 // viewMail renders the inbox list.
 func (m Model) viewMail() string {
 	var b strings.Builder
-
 	if len(m.messages) == 0 {
-		b.WriteString(styles.empty.Render("No messages in this view."))
+		empty := "No messages in Inbox."
+		if m.all {
+			empty = "No messages in all mail."
+		}
+		b.WriteString(styles.empty.Render(empty))
 		b.WriteString("\n")
 	}
 	for i, msg := range m.messages {
-		line := m.mailLine(i, msg)
+		line := m.mailRow(i, msg)
 		switch {
 		case i == m.cursor:
 			line = styles.selected.Render(line)
@@ -391,32 +394,27 @@ func (m Model) viewMail() string {
 	}
 
 	b.WriteString(m.footer())
-	return m.screen(m.chrome("Inbox", len(m.messages)), b.String())
+	return m.screen(m.chrome(m.mailTitle(), -1), b.String())
 }
 
-// viewCalendar renders a simple list of upcoming calendar events. A richer
-// per-day layout will replace it later.
 func (m Model) viewCalendar() string {
 	var b strings.Builder
-
 	if len(m.events) == 0 {
 		b.WriteString(styles.empty.Render("No upcoming events."))
 		b.WriteString("\n")
 	}
+	lastDay := ""
 	for i, e := range m.events {
-		cursor := "  "
-		if i == m.cursor {
-			cursor = "> "
+		day := calendarDayLabel(e)
+		if day != lastDay {
+			if lastDay != "" {
+				b.WriteString("\n")
+			}
+			b.WriteString(styles.header.Render(day))
+			b.WriteString("\n")
+			lastDay = day
 		}
-		whenWidth := 28
-		if m.isNarrow() {
-			whenWidth = 14
-		}
-		subjectWidth := m.listWidth() - len(cursor) - whenWidth - 1
-		if subjectWidth < 8 {
-			subjectWidth = 8
-		}
-		line := fmt.Sprintf("%s%-*s %s", cursor, whenWidth, truncate(eventWhen(e), whenWidth), truncate(e.Subject, subjectWidth))
+		line := m.calendarRow(i, e)
 		if i == m.cursor {
 			line = styles.selected.Render(line)
 		}
@@ -425,7 +423,140 @@ func (m Model) viewCalendar() string {
 	}
 
 	b.WriteString(m.footer())
-	return m.screen(m.chrome("Calendar", len(m.events)), b.String())
+	return m.screen(m.chrome(m.calendarTitle(), -1), b.String())
+}
+
+func (m Model) mailTitle() string {
+	scope := "Inbox"
+	if m.all {
+		scope = "All mail"
+	}
+	return fmt.Sprintf("Inbox · %d %s · %s", len(m.messages), pluralize(len(m.messages), "message"), scope)
+}
+
+func (m Model) calendarTitle() string {
+	return fmt.Sprintf("Upcoming · %d %s", len(m.events), pluralize(len(m.events), "event"))
+}
+
+func pluralize(count int, singular string) string {
+	if count != 1 {
+		return singular + "s"
+	}
+	return singular
+}
+
+func (m Model) mailRow(index int, msg mail.Message) string {
+	cursor := "  "
+	if index == m.cursor {
+		cursor = "> "
+	}
+	state := "    "
+	if !msg.IsRead {
+		state = "NEW "
+	}
+	from := msg.From.Name
+	if from == "" {
+		from = msg.From.Email
+	}
+	width := m.listWidth()
+	if m.isNarrow() {
+		senderWidth := maxInt(4, width-len(cursor)-len(state)-6)
+		firstLine := fmt.Sprintf("%s%s%s %s",
+			cursor,
+			state,
+			truncate(from, senderWidth),
+			receivedTime(msg),
+		)
+		secondLine := "    " + truncate(msg.Subject, maxInt(4, width-4))
+		return truncate(firstLine, width) + "\n" + truncate(secondLine, width)
+	}
+	senderWidth := minInt(22, maxInt(12, width/4))
+	subjectWidth := maxInt(8, width-senderWidth-21)
+	return truncate(fmt.Sprintf("%s%s %-*s %s %s",
+		cursor,
+		state,
+		senderWidth,
+		truncate(from, senderWidth),
+		truncate(msg.Subject, subjectWidth),
+		receivedDateTime(msg),
+	), width)
+}
+
+func (m Model) calendarRow(index int, e calendar.Event) string {
+	cursor := "  "
+	if index == m.cursor {
+		cursor = "> "
+	}
+	width := m.listWidth()
+	if m.isNarrow() {
+		timeWidth := minInt(7, maxInt(4, width/2))
+		subjectWidth := maxInt(4, width-len(cursor)-timeWidth-1)
+		return truncate(fmt.Sprintf("%s%-*s %s", cursor, timeWidth, truncate(eventTimeLabel(e, true), timeWidth), truncate(e.Subject, subjectWidth)), width)
+	}
+	timeWidth := 20
+	organizerWidth := 0
+	if e.Organizer != "" && width >= 84 {
+		organizerWidth = minInt(16, width/5)
+	}
+	subjectWidth := width - timeWidth - 3
+	if organizerWidth > 0 {
+		subjectWidth -= 3 + organizerWidth
+	}
+	subjectWidth = maxInt(12, subjectWidth)
+	line := fmt.Sprintf("%s%-*s %s", cursor, timeWidth, truncate(eventTimeLabel(e, false), timeWidth), truncate(e.Subject, subjectWidth))
+	if organizerWidth > 0 {
+		line += " " + styles.metadata.Render("· "+truncate(e.Organizer, organizerWidth))
+	}
+	return line
+}
+
+func receivedDateTime(msg mail.Message) string {
+	if msg.Received.IsZero() {
+		return "-"
+	}
+	return msg.Received.Time.Local().Format("Jan 02 15:04")
+}
+
+func receivedTime(msg mail.Message) string {
+	if msg.Received.IsZero() {
+		return "-"
+	}
+	return msg.Received.Time.Local().Format("15:04")
+}
+
+func calendarDayLabel(e calendar.Event) string {
+	if e.Start.IsZero() {
+		return "No date"
+	}
+	return e.Start.Time.Local().Format("Mon, Jan 02")
+}
+
+func eventTimeLabel(e calendar.Event, compact bool) string {
+	if e.Start.IsZero() {
+		return "-"
+	}
+	start := e.Start.Time.Local()
+	if e.IsAllDay {
+		if e.End.IsZero() || !e.End.Time.Local().After(start.AddDate(0, 0, 1)) {
+			return "all day"
+		}
+		end := e.End.Time.Local().AddDate(0, 0, -1)
+		if compact {
+			return "all day→" + end.Format("Jan 02")
+		}
+		return "all day → " + end.Format("Jan 02")
+	}
+	if e.End.IsZero() {
+		return start.Format("15:04")
+	}
+	end := e.End.Time.Local()
+	if sameDay(start, end) {
+		return start.Format("15:04") + "-" + end.Format("15:04")
+	}
+	if compact {
+		return start.Format("Jan 02") + "→" + end.Format("Jan 02")
+	}
+	return start.Format("Jan 02 15:04") + " → " + end.Format("Jan 02 15:04")
 }
 
 // eventWhen formats an event's start and end for the calendar list. All-day
@@ -578,37 +709,24 @@ func formatAddrs(as []mail.Address) string {
 }
 
 // subjectWidth returns how many columns the subject may use in a standard-width
-// inbox row. Narrow terminals use a two-line row instead.
+// inbox row after reserving state, sender, and received-time columns.
 func (m Model) subjectWidth() int {
-	const prefix = 31
-	w := m.listWidth() - prefix
-	if w < 8 {
-		w = 8
-	}
-	return w
+	senderWidth := minInt(22, maxInt(12, m.listWidth()/4))
+	return maxInt(8, m.listWidth()-senderWidth-21)
 }
 
-func (m Model) mailLine(i int, msg mail.Message) string {
-	cursor := "  "
-	if i == m.cursor {
-		cursor = "> "
+func minInt(a, b int) int {
+	if a < b {
+		return a
 	}
-	from := msg.From.Name
-	if from == "" {
-		from = msg.From.Email
+	return b
+}
+
+func maxInt(a, b int) int {
+	if a > b {
+		return a
 	}
-	if m.isNarrow() {
-		state := ""
-		if !msg.IsRead {
-			state = "NEW "
-		}
-		return fmt.Sprintf("%s%s%s\n    %s", cursor, state, truncate(from, m.listWidth()-len(cursor)-len(state)), truncate(msg.Subject, m.listWidth()-4))
-	}
-	state := "    "
-	if !msg.IsRead {
-		state = "NEW "
-	}
-	return fmt.Sprintf("%s%s %-22s %s", cursor, state, truncate(from, 22), truncate(msg.Subject, m.subjectWidth()))
+	return b
 }
 
 func (m Model) loadingView() string {
@@ -619,7 +737,14 @@ func (m Model) loadingView() string {
 		message = "Loading all mail…"
 	}
 	content := styles.loading.Render(message) + "\n\n" + styles.help.Render("Help: R refresh · q quit")
-	return m.screen(m.chrome(m.modeTitle(), -1), content)
+	title := "Inbox · Loading…"
+	if m.all {
+		title = "All mail · Loading…"
+	}
+	if m.mode == calendarMode {
+		title = "Upcoming · Loading…"
+	}
+	return m.screen(m.chrome(title, -1), content)
 }
 
 func (m Model) errorView() string {
@@ -635,7 +760,7 @@ func (m Model) chrome(title string, count int) string {
 		title = fmt.Sprintf("%s (%d)", title, count)
 	}
 	if m.isNarrow() {
-		return styles.chrome.Render("gh msft · " + title)
+		return styles.chrome.Render(truncate("gh msft · "+title, m.listWidth()))
 	}
 	mailTab := styles.inactiveTab.Render("Mail")
 	calendarTab := styles.inactiveTab.Render("Calendar")
@@ -644,6 +769,8 @@ func (m Model) chrome(title string, count int) string {
 	} else {
 		calendarTab = styles.activeTab.Render("[Calendar]")
 	}
+	prefixWidth := lipgloss.Width("gh msft  [Mail]  [Calendar]  ")
+	title = truncate(title, maxInt(1, m.listWidth()-prefixWidth))
 	return styles.chrome.Render("gh msft") + "  " + mailTab + "  " + calendarTab + "  " + styles.header.Render(title)
 }
 
@@ -719,13 +846,17 @@ func wrapPhrases(phrases []string, width int) string {
 
 func truncate(s string, n int) string {
 	s = strings.ReplaceAll(s, "\n", " ")
-	if len(s) <= n {
+	if n <= 0 {
+		return ""
+	}
+	runes := []rune(s)
+	if len(runes) <= n {
 		return s
 	}
-	if n <= 1 {
-		return s[:n]
+	if n == 1 {
+		return string(runes[:1])
 	}
-	return s[:n-1] + "…"
+	return string(runes[:n-1]) + "…"
 }
 
 // Run starts the interactive TUI against the given providers. When all is true
