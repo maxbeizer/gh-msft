@@ -14,13 +14,14 @@ import (
 )
 
 type fakeMail struct {
-	inbox      []mail.Message
-	listErr    error
-	detail     mail.Detail
-	detailErr  error
-	detailIDs  []string
-	archived   []string
-	archiveErr error
+	inbox       []mail.Message
+	listErr     error
+	detail      mail.Detail
+	detailErr   error
+	detailIDs   []string
+	archived    []string
+	archiveErr  error
+	archiveErrs map[string]error
 }
 
 func (f *fakeMail) ListInbox(ctx context.Context, top int, all bool) ([]mail.Message, error) {
@@ -36,6 +37,9 @@ func (f *fakeMail) GetDetail(ctx context.Context, id string) (mail.Detail, error
 }
 
 func (f *fakeMail) Archive(ctx context.Context, id string) error {
+	if err := f.archiveErrs[id]; err != nil {
+		return err
+	}
 	if f.archiveErr != nil {
 		return f.archiveErr
 	}
@@ -87,6 +91,17 @@ func run(t *testing.T, factory Factory, args ...string) (string, error) {
 	root.SetArgs(args)
 	err := root.ExecuteContext(context.Background())
 	return buf.String(), err
+}
+
+func runStreams(t *testing.T, factory Factory, args ...string) (string, string, error) {
+	t.Helper()
+	root := NewRootCmd(factory)
+	var stdout, stderr bytes.Buffer
+	root.SetOut(&stdout)
+	root.SetErr(&stderr)
+	root.SetArgs(args)
+	err := root.ExecuteContext(context.Background())
+	return stdout.String(), stderr.String(), err
 }
 
 func TestRootCmdNoArgsLaunchesTUI(t *testing.T) {
@@ -348,6 +363,102 @@ func TestMailArchivePropagatesError(t *testing.T) {
 	_, err := run(t, factoryFor(fm, &fakeCal{}), "mail", "archive", "X")
 	if err == nil {
 		t.Fatal("expected archive error to propagate")
+	}
+}
+
+func TestJSONOutputContracts(t *testing.T) {
+	tests := []struct {
+		name    string
+		factory Factory
+		args    []string
+		check   func(t *testing.T, stdout string)
+	}{
+		{
+			name:    "mail list stays an array",
+			factory: factoryFor(&fakeMail{inbox: []mail.Message{{ID: "M1"}}}, &fakeCal{}),
+			args:    []string{"mail", "list", "--json"},
+			check: func(t *testing.T, stdout string) {
+				t.Helper()
+				var messages []mail.Message
+				if err := json.Unmarshal([]byte(stdout), &messages); err != nil {
+					t.Fatalf("unmarshal message array: %v", err)
+				}
+				if len(messages) != 1 || messages[0].ID != "M1" {
+					t.Fatalf("messages = %+v", messages)
+				}
+			},
+		},
+		{
+			name:    "calendar stays an array",
+			factory: factoryFor(&fakeMail{}, &fakeCal{events: []calendar.Event{{ID: "E1"}}}),
+			args:    []string{"cal", "--json"},
+			check: func(t *testing.T, stdout string) {
+				t.Helper()
+				var events []calendar.Event
+				if err := json.Unmarshal([]byte(stdout), &events); err != nil {
+					t.Fatalf("unmarshal event array: %v", err)
+				}
+				if len(events) != 1 || events[0].ID != "E1" {
+					t.Fatalf("events = %+v", events)
+				}
+			},
+		},
+		{
+			name:    "archive returns completed ids",
+			factory: factoryFor(&fakeMail{}, &fakeCal{}),
+			args:    []string{"mail", "archive", "M1", "M2", "--json"},
+			check: func(t *testing.T, stdout string) {
+				t.Helper()
+				var result archiveResult
+				if err := json.Unmarshal([]byte(stdout), &result); err != nil {
+					t.Fatalf("unmarshal archive result: %v", err)
+				}
+				if got, want := strings.Join(result.Archived, ","), "M1,M2"; got != want {
+					t.Fatalf("archived = %q, want %q", got, want)
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			stdout, stderr, err := runStreams(t, tt.factory, tt.args...)
+			if err != nil {
+				t.Fatalf("run: %v", err)
+			}
+			if stderr != "" {
+				t.Errorf("stderr = %q, want no diagnostics", stderr)
+			}
+			tt.check(t, stdout)
+		})
+	}
+}
+
+func TestMailArchiveJSONPartialFailure(t *testing.T) {
+	fm := &fakeMail{archiveErrs: map[string]error{"M2": errors.New("boom")}}
+	stdout, stderr, err := runStreams(
+		t,
+		factoryFor(fm, &fakeCal{}),
+		"mail",
+		"archive",
+		"M1",
+		"M2",
+		"--json",
+	)
+	if err == nil {
+		t.Fatal("expected partial archive failure")
+	}
+	if stdout != "" {
+		t.Errorf("stdout = %q, want no incomplete JSON result", stdout)
+	}
+	if stderr != "" {
+		t.Errorf("stderr = %q, want command diagnostics returned as an error", stderr)
+	}
+	if got, want := err.Error(), "archive incomplete: archived M1; failed to archive M2: boom"; got != want {
+		t.Errorf("error = %q, want %q", got, want)
+	}
+	if got, want := strings.Join(fm.archived, ","), "M1"; got != want {
+		t.Errorf("archived = %q, want %q", got, want)
 	}
 }
 

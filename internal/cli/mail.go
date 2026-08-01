@@ -76,6 +76,7 @@ func newMailViewCmd(factory Factory) *cobra.Command {
 
 func newMailArchiveCmd(factory Factory) *cobra.Command {
 	var fromStdin bool
+	var asJSON bool
 	cmd := &cobra.Command{
 		Use:   "archive [message-id...]",
 		Short: "Archive one or more messages by id",
@@ -101,19 +102,47 @@ func newMailArchiveCmd(factory Factory) *cobra.Command {
 			}
 			defer cleanup()
 			sp.setMessages("Archiving…")
-			for _, id := range ids {
+			for i, id := range ids {
 				if err := providers.Mail.Archive(cmd.Context(), id); err != nil {
 					sp.stopSpinner()
-					return fmt.Errorf("archiving %s: %w", id, err)
+					return newArchiveError(ids[:i], id, err)
 				}
 			}
 			sp.stopSpinner()
-			for _, id := range ids {
-				fmt.Fprintf(cmd.OutOrStdout(), "archived %s\n", id)
-			}
-			return nil
+			return writeArchiveResult(cmd.OutOrStdout(), ids, asJSON)
 		},
 	}
 	cmd.Flags().BoolVar(&fromStdin, "stdin", false, "read message ids from stdin (one per line)")
+	cmd.Flags().BoolVar(&asJSON, "json", false, "output result as JSON")
 	return cmd
+}
+
+type archiveError struct {
+	archived []string
+	failed   string
+	err      error
+}
+
+func newArchiveError(archived []string, failed string, err error) error {
+	return &archiveError{
+		archived: append([]string(nil), archived...),
+		failed:   failed,
+		err:      err,
+	}
+}
+
+func (e *archiveError) Error() string {
+	if len(e.archived) == 0 {
+		return fmt.Sprintf("archiving %s: %v", e.failed, e.err)
+	}
+	return fmt.Sprintf(
+		"archive incomplete: archived %s; failed to archive %s: %v",
+		strings.Join(e.archived, ", "),
+		e.failed,
+		e.err,
+	)
+}
+
+func (e *archiveError) Unwrap() error {
+	return e.err
 }

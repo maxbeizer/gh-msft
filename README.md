@@ -71,12 +71,30 @@ gh msft mail view <id> --json     # machine-readable message detail
 gh msft mail archive <id>         # move a message to Archive
 gh msft mail list --json | jq -r '.[].id' | gh msft mail archive --stdin
 gh msft mail list --json | jq -r '.[0].id' | xargs gh msft mail view --json
+gh msft mail list --json | jq -r '.[].id' | gh msft mail archive --stdin --json
 gh msft cal                       # upcoming calendar events
 gh msft cal --json                # machine-readable output
 gh msft accept-eula               # accept the WorkIQ EULA (run once)
 gh msft tui                       # interactive inbox and calendar
 gh msft tui --cal                 # start in calendar mode
 ```
+
+### Machine-readable output
+
+Commands with `--json` write only the documented JSON value to stdout. Progress
+and diagnostics are written to stderr; failures exit nonzero. The following
+payload shapes are stable:
+
+| Command | JSON payload |
+| --- | --- |
+| `mail list --json` | Array of message objects (backward compatible) |
+| `cal --json` | Array of event objects (backward compatible) |
+| `mail archive <id...> --json` | `{"archived":["<id>", ...]}` |
+
+`mail archive --json` writes its success result only after every requested ID is
+archived. If one ID fails after earlier IDs succeed, it exits nonzero without a
+success JSON value and reports the completed and failed IDs in its stderr
+diagnostic.
 
 ### Interactive inbox (`gh msft` or `gh msft tui`)
 

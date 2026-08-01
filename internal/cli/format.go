@@ -15,6 +15,10 @@ import (
 
 const maxSubjectLen = 60
 
+type archiveResult struct {
+	Archived []string `json:"archived"`
+}
+
 // writeMessages renders inbox messages as a table or JSON.
 func writeMessages(w io.Writer, msgs []mail.Message, asJSON bool) error {
 	if asJSON {
@@ -107,6 +111,16 @@ func safeTerminalText(s string) string {
 		}
 		return -1
 	}, s)
+}
+
+func writeArchiveResult(w io.Writer, archived []string, asJSON bool) error {
+	if asJSON {
+		return writeJSON(w, archiveResult{Archived: archived})
+	}
+	for _, id := range archived {
+		fmt.Fprintf(w, "archived %s\n", id)
+	}
+	return nil
 }
 
 func writeJSON(w io.Writer, v any) error {

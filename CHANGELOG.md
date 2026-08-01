@@ -23,6 +23,9 @@ and this project adheres to [Semantic Versioning](https://semver.org).
   calendar, and scrollable message details, while preserving arrow-key and
   home/end alternatives. Contextual footers and expanded help now reflect the
   active mode, including loading and error recovery controls.
+- `mail archive --json` now emits a stable `{"archived":[...]}` action result
+  after every requested message is archived. Existing `mail list --json` and
+  `cal --json` array payloads remain unchanged.
 
 ## [0.3.0] - 2026-08-01
 
