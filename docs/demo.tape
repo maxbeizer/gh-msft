@@ -10,8 +10,8 @@ Type "TZ=UTC ./bin/gh-msft demo"
 Enter
 Sleep 2s
 Tab
-Sleep 2s
+Sleep 4s
 Enter
-Sleep 2s
+Sleep 6s
 Type "q"
-Sleep 1s
+Sleep 2s
