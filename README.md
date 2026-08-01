@@ -66,8 +66,11 @@ gh msft                           # interactive inbox and calendar
 gh msft mail list                 # recent inbox messages
 gh msft mail list --all           # include all mail, not just the inbox
 gh msft mail list --top 50 --json # machine-readable output
+gh msft mail view <id>            # message metadata and plain-text body
+gh msft mail view <id> --json     # machine-readable message detail
 gh msft mail archive <id>         # move a message to Archive
 gh msft mail list --json | jq -r '.[].id' | gh msft mail archive --stdin
+gh msft mail list --json | jq -r '.[0].id' | xargs gh msft mail view --json
 gh msft cal                       # upcoming calendar events
 gh msft cal --json                # machine-readable output
 gh msft accept-eula               # accept the WorkIQ EULA (run once)

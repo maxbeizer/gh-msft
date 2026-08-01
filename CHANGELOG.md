@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org).
 
 ### Added
 
+- `gh msft mail view <message-id>` displays a message's metadata and safe
+  plain-text body, with `--json` for clean scriptable output.
 - Running `gh msft` without a subcommand now launches the interactive inbox and
   calendar TUI, matching `gh msft tui`.
 - Interactive WorkIQ startup and inbox/calendar loading now use deterministic,

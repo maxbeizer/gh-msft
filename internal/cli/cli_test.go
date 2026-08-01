@@ -16,12 +16,26 @@ import (
 type fakeMail struct {
 	inbox      []mail.Message
 	listErr    error
+	message    mail.Message
+	getErr     error
+	getIDs     []string
 	archived   []string
 	archiveErr error
+	body       string
+	bodyErr    error
+	bodyIDs    []string
 }
 
 func (f *fakeMail) ListInbox(ctx context.Context, top int, all bool) ([]mail.Message, error) {
 	return f.inbox, f.listErr
+}
+
+func (f *fakeMail) GetMessage(ctx context.Context, id string) (mail.Message, error) {
+	f.getIDs = append(f.getIDs, id)
+	if f.getErr != nil {
+		return mail.Message{}, f.getErr
+	}
+	return f.message, nil
 }
 
 func (f *fakeMail) Archive(ctx context.Context, id string) error {
@@ -33,7 +47,11 @@ func (f *fakeMail) Archive(ctx context.Context, id string) error {
 }
 
 func (f *fakeMail) Body(ctx context.Context, id string) (string, error) {
-	return "", nil
+	f.bodyIDs = append(f.bodyIDs, id)
+	if f.bodyErr != nil {
+		return "", f.bodyErr
+	}
+	return f.body, nil
 }
 
 type fakeCal struct {
@@ -193,6 +211,100 @@ func TestMailListEmpty(t *testing.T) {
 	}
 	if !strings.Contains(out, "No messages") {
 		t.Errorf("expected empty message, got:\n%s", out)
+	}
+}
+
+func TestMailView(t *testing.T) {
+	message := mail.Message{
+		ID:       "MSG1",
+		Subject:  "Status update",
+		From:     mail.Address{Name: "Ada Lovelace", Email: "ada@example.com"},
+		To:       []mail.Address{{Name: "Grace Hopper", Email: "grace@example.com"}},
+		Received: mstime.Parse("2026-07-17T21:36:12Z"),
+		IsRead:   false,
+	}
+	tests := []struct {
+		name    string
+		args    []string
+		wantOut []string
+		asJSON  bool
+	}{
+		{
+			name:    "human output",
+			args:    []string{"mail", "view", "MSG1"},
+			wantOut: []string{"Subject: Status update", "From: Ada Lovelace <ada@example.com>", "To: Grace Hopper <grace@example.com>", "plain text body"},
+		},
+		{
+			name:   "json output",
+			args:   []string{"mail", "view", "MSG1", "--json"},
+			asJSON: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fm := &fakeMail{message: message, body: "plain text body"}
+			out, err := run(t, factoryFor(fm, &fakeCal{}), tt.args...)
+			if err != nil {
+				t.Fatalf("run: %v", err)
+			}
+			if len(fm.getIDs) != 1 || fm.getIDs[0] != "MSG1" || len(fm.bodyIDs) != 1 || fm.bodyIDs[0] != "MSG1" {
+				t.Errorf("provider ids = get:%v body:%v", fm.getIDs, fm.bodyIDs)
+			}
+			if tt.asJSON {
+				var got mail.Detail
+				if err := json.Unmarshal([]byte(out), &got); err != nil {
+					t.Fatalf("invalid JSON output: %v\n%s", err, out)
+				}
+				if got.ID != message.ID || got.Subject != message.Subject || got.From != message.From || len(got.To) != 1 || got.To[0] != message.To[0] || got.Body != "plain text body" {
+					t.Errorf("JSON detail = %+v", got)
+				}
+				return
+			}
+			for _, want := range tt.wantOut {
+				if !strings.Contains(out, want) {
+					t.Errorf("output missing %q:\n%s", want, out)
+				}
+			}
+		})
+	}
+}
+
+func TestMailViewErrors(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+		mail *fakeMail
+		want string
+	}{
+		{
+			name: "bad arguments",
+			args: []string{"mail", "view"},
+			mail: &fakeMail{},
+			want: "accepts 1 arg(s), received 0",
+		},
+		{
+			name: "metadata provider error",
+			args: []string{"mail", "view", "MSG1", "--json"},
+			mail: &fakeMail{getErr: errors.New("permission denied")},
+			want: "getting message MSG1: permission denied",
+		},
+		{
+			name: "body provider error",
+			args: []string{"mail", "view", "MSG1", "--json"},
+			mail: &fakeMail{message: mail.Message{ID: "MSG1"}, bodyErr: errors.New("not found")},
+			want: "reading body for message MSG1: not found",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			out, err := run(t, factoryFor(tt.mail, &fakeCal{}), tt.args...)
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("error = %v, want %q", err, tt.want)
+			}
+			if out != "" {
+				t.Errorf("stdout = %q, want empty on error", out)
+			}
+		})
 	}
 }
 

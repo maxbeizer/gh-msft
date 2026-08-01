@@ -31,6 +31,15 @@ func (f *fakeProvider) ListInbox(ctx context.Context, top int, all bool) ([]mail
 	return f.inbox, nil
 }
 
+func (f *fakeProvider) GetMessage(ctx context.Context, id string) (mail.Message, error) {
+	for _, message := range f.inbox {
+		if message.ID == id {
+			return message, nil
+		}
+	}
+	return mail.Message{}, errors.New("message not found")
+}
+
 func (f *fakeProvider) Archive(ctx context.Context, id string) error {
 	if f.archiveErr != nil {
 		return f.archiveErr

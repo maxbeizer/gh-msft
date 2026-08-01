@@ -45,6 +45,19 @@ func writeMessages(w io.Writer, msgs []mail.Message, asJSON bool) error {
 }
 
 // writeEvents renders calendar events as a table or JSON.
+// writeMessageDetail renders one message and its body as text or JSON.
+func writeMessageDetail(w io.Writer, detail mail.Detail, asJSON bool) error {
+	if asJSON {
+		return writeJSON(w, detail)
+	}
+	fmt.Fprintf(w, "Subject: %s\n", detail.Subject)
+	fmt.Fprintf(w, "Received: %s\n", formatLocal(detail.Received.Time))
+	fmt.Fprintf(w, "From: %s\n", formatAddress(detail.From))
+	fmt.Fprintf(w, "To: %s\n\n", formatAddresses(detail.To))
+	_, err := fmt.Fprintln(w, detail.Body)
+	return err
+}
+
 func writeEvents(w io.Writer, events []calendar.Event, asJSON bool) error {
 	if asJSON {
 		return writeJSON(w, events)
@@ -63,6 +76,27 @@ func writeEvents(w io.Writer, events []calendar.Event, asJSON bool) error {
 		)
 	}
 	return tw.Flush()
+}
+
+func formatAddress(a mail.Address) string {
+	if a.Name == "" {
+		return a.Email
+	}
+	if a.Email == "" {
+		return a.Name
+	}
+	return fmt.Sprintf("%s <%s>", a.Name, a.Email)
+}
+
+func formatAddresses(addrs []mail.Address) string {
+	if len(addrs) == 0 {
+		return "-"
+	}
+	formatted := make([]string, 0, len(addrs))
+	for _, a := range addrs {
+		formatted = append(formatted, formatAddress(a))
+	}
+	return strings.Join(formatted, ", ")
 }
 
 func writeJSON(w io.Writer, v any) error {
