@@ -19,7 +19,7 @@ func newEULACmd(factory Factory) *cobra.Command {
 				return err
 			}
 			defer cleanup()
-			sp.setMessage("Accepting EULA…")
+			sp.setMessages("Accepting EULA…")
 			err = providers.EULA.AcceptEULA(cmd.Context())
 			sp.stopSpinner()
 			if err != nil {
