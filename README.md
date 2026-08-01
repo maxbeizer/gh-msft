@@ -9,8 +9,8 @@ Microsoft 365 **mail and calendar** from the terminal.
 ## How it works (auth)
 
 `gh-msft` performs **no authentication of its own** and stores **no credentials**.
-It rides [WorkIQ](https://github.com/microsoft/work-iq): it spawns the WorkIQ MCP
-server (`workiq mcp`) as a child process and calls its deterministic, non-LLM
+It rides [WorkIQ](https://github.com/microsoft/work-iq): a user-local broker keeps
+one WorkIQ MCP server (`workiq mcp`) warm and calls its deterministic, non-LLM
 Microsoft Graph proxy (`fetch` / `do_action`). WorkIQ — backed by your operating
 system's Microsoft SSO broker — owns authentication for your signed-in Microsoft
 365 account. If WorkIQ can read your mail, so can `gh-msft`.
@@ -22,10 +22,34 @@ system's Microsoft SSO broker — owns authentication for your signed-in Microso
   (or `npx -y @microsoft/workiq accept-eula`); admin consent may be required on
   your tenant — see the WorkIQ docs.
 
-By default `gh-msft` launches `npx -y @microsoft/workiq@latest mcp`. Override with:
+By default the broker launches `npx -y @microsoft/workiq@latest mcp`. Override with:
 
 - `WORKIQ_MCP_COMMAND` — full command line (e.g. `WORKIQ_MCP_COMMAND="workiq mcp"`).
 - `WORKIQ_BIN` — path to a `workiq` binary (`<bin> mcp` is used).
+- `WORKIQ_DIRECT_PROCESS=1` — bypass the broker and launch a private WorkIQ process
+  for this command. Use this for diagnosis or when a local broker cannot start.
+
+### WorkIQ broker lifecycle
+
+The first mail or calendar command starts a broker in your user cache directory,
+then later invocations reuse its authenticated WorkIQ connection. The broker listens
+only on `127.0.0.1`, requires a random token stored in a user-only state file, and
+stores no Microsoft credentials. It shuts down on termination signals; the next
+command automatically replaces stale state, unavailable endpoints, or an older
+broker protocol.
+
+To compare cold and warm startup on your machine:
+
+```bash
+time gh msft mail list --top 1 >/dev/null  # cold broker + WorkIQ startup
+time gh msft mail list --top 1 >/dev/null  # warm broker
+time gh msft cal --top 1 >/dev/null        # warm broker
+```
+
+If the broker repeatedly fails, run one command with
+`WORKIQ_DIRECT_PROCESS=1` to distinguish a WorkIQ problem from a broker problem.
+Remove the `gh-msft` directory under your system user cache directory only after
+all `gh msft` commands have exited; the next invocation recreates it.
 
 ## Installation
 

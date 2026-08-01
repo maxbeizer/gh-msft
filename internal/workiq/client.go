@@ -36,8 +36,9 @@ type FetchResult struct {
 // Client is a synchronous MCP client bound to a single WorkIQ server process (or,
 // in tests, to an arbitrary pair of pipes).
 type Client struct {
-	proc *exec.Cmd
-	t    *stdioTransport
+	proc   *exec.Cmd
+	t      *stdioTransport
+	broker *brokerClient
 }
 
 // commandFor returns the command and args used to launch the WorkIQ MCP server.
@@ -68,9 +69,18 @@ func acceptEULACommand(env func(string) string) (string, []string) {
 	return "npx", []string{"-y", "@microsoft/workiq@latest", "accept-eula"}
 }
 
-// New spawns the WorkIQ MCP server and performs the JSON-RPC initialize handshake.
-// Close must be called to terminate the child process.
+// New connects to the local WorkIQ broker. Set WORKIQ_DIRECT_PROCESS=1 to bypass
+// the broker and spawn a private stdio server, which is useful for diagnosis.
 func New(ctx context.Context) (*Client, error) {
+	if strings.TrimSpace(os.Getenv("WORKIQ_DIRECT_PROCESS")) != "" {
+		return newDirect(ctx)
+	}
+	return newBrokerClient(ctx)
+}
+
+// newDirect spawns the WorkIQ MCP server and performs the JSON-RPC initialize
+// handshake. Close must be called to terminate the child process.
+func newDirect(ctx context.Context) (*Client, error) {
 	name, args := commandFor(os.Getenv)
 	cmd := exec.CommandContext(ctx, name, args...)
 	// Send the child's stderr to the null device directly (not io.Discard): an
@@ -153,6 +163,9 @@ func (c *Client) handshake(ctx context.Context) error {
 // group (npx -> node -> native workiq) so no orphaned WorkIQ processes linger, and
 // bounds the wait so Close never blocks the caller's exit.
 func (c *Client) Close() error {
+	if c.broker != nil {
+		return nil
+	}
 	if c.proc == nil || c.proc.Process == nil {
 		return nil
 	}
@@ -227,6 +240,9 @@ func (c *Client) Fetch(ctx context.Context, entityURLs ...string) ([]FetchResult
 	if len(entityURLs) == 0 {
 		return nil, errors.New("workiq: Fetch requires at least one entity URL")
 	}
+	if c.broker != nil {
+		return c.broker.fetch(ctx, entityURLs)
+	}
 	text, err := c.callTool(ctx, "fetch", map[string]any{"entityUrls": entityURLs})
 	if err != nil {
 		return nil, err
@@ -255,6 +271,9 @@ func (c *Client) DoAction(ctx context.Context, actionURL string, jsonBody any) (
 	}
 	if jsonBody == nil {
 		jsonBody = map[string]any{}
+	}
+	if c.broker != nil {
+		return c.broker.doAction(ctx, actionURL, jsonBody)
 	}
 	text, err := c.callTool(ctx, "do_action", map[string]any{
 		"actionUrl": actionURL,
