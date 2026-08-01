@@ -78,18 +78,17 @@ gh msft tui --cal                 # start in calendar mode
 The TUI has two modes: mail (inbox) and calendar (upcoming events). Press
 `tab` to switch, or start in calendar mode with `--cal`.
 
-| Key        | Action                          |
-| ---------- | ------------------------------- |
-| `j` / `k`  | move down / up (also arrows)    |
-| `g` / `G`  | jump to top / bottom            |
-| `tab`      | switch mail / calendar          |
-| `a`        | archive selected message (mail) |
-| `enter`    | open selected message           |
-| `esc`      | close open message              |
-| `r`        | toggle read state (visual only) |
-| `R`        | refresh current view            |
-| `?`        | toggle help                     |
-| `q`        | quit                            |
+| Key | Action |
+| --- | --- |
+| `j` / `k` or `↓` / `↑` | move down / up in mail and calendar; scroll an open message |
+| `g` / `G` or `home` / `end` | jump to top / bottom in mail, calendar, and open messages |
+| `tab` | switch mail / calendar |
+| `a` | archive selected message (mail) |
+| `enter` | open selected message; close it when open |
+| `esc`, `q`, or `backspace` | close an open message (`q` quits from list, loading, and error views) |
+| `r` | toggle read state (mail list); retry after an error |
+| `R` | refresh current list |
+| `?` | toggle contextual help |
 
 ## Why this over WorkIQ directly?
 

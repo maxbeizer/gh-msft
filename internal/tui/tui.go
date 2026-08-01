@@ -53,9 +53,10 @@ type Model struct {
 	showHelp bool
 	quitting bool
 
-	viewing     bool
-	body        string
-	bodyLoading bool
+	viewing      bool
+	body         string
+	bodyLoading  bool
+	detailScroll int
 
 	width  int
 	height int
@@ -171,6 +172,12 @@ func (m Model) update(msg tea.Msg) (Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyMsg:
+		if m.err != nil {
+			return m.handleErrorKey(msg)
+		}
+		if m.loading {
+			return m.handleLoadingKey(msg)
+		}
 		return m.handleKey(msg)
 	}
 	return m, nil
@@ -186,6 +193,22 @@ func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 			m.viewing = false
 			m.body = ""
 			m.bodyLoading = false
+			m.detailScroll = 0
+			return m, nil
+		case "?":
+			m.showHelp = !m.showHelp
+			return m, nil
+		case "j", "down":
+			m.moveDetail(1)
+			return m, nil
+		case "k", "up":
+			m.moveDetail(-1)
+			return m, nil
+		case "g", "home":
+			m.detailScroll = 0
+			return m, nil
+		case "G", "end":
+			m.detailScroll = m.detailMaxScroll()
 			return m, nil
 		}
 		return m, nil
@@ -252,6 +275,36 @@ func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m Model) handleLoadingKey(msg tea.KeyMsg) (Model, tea.Cmd) {
+	switch msg.String() {
+	case "ctrl+c", "q":
+		m.quitting = true
+		return m, tea.Quit
+	case "?":
+		m.showHelp = !m.showHelp
+	}
+	return m, nil
+}
+
+func (m Model) handleErrorKey(msg tea.KeyMsg) (Model, tea.Cmd) {
+	switch msg.String() {
+	case "ctrl+c", "q":
+		m.quitting = true
+		return m, tea.Quit
+	case "?":
+		m.showHelp = !m.showHelp
+		return m, nil
+	case "r", "R":
+		m.err = nil
+		m.loading = true
+		if m.mode == calendarMode {
+			return m, m.loadEventsCmd()
+		}
+		return m, m.loadCmd()
+	}
+	return m, nil
+}
+
 // loadForModeCmd returns a load command when the current mode's data has not been
 // fetched yet, or nil when it is already loaded.
 func (m Model) loadForModeCmd() tea.Cmd {
@@ -267,6 +320,16 @@ func (m Model) loadForModeCmd() tea.Cmd {
 func (m *Model) moveCursor(delta int) {
 	m.cursor += delta
 	m.clampCursor()
+}
+
+func (m *Model) moveDetail(delta int) {
+	m.detailScroll += delta
+	if m.detailScroll < 0 {
+		m.detailScroll = 0
+	}
+	if max := m.detailMaxScroll(); m.detailScroll > max {
+		m.detailScroll = max
+	}
 }
 
 func (m *Model) toggleMode() {
@@ -295,6 +358,28 @@ func (m *Model) clampCursor() {
 	if m.cursor < 0 {
 		m.cursor = 0
 	}
+}
+
+func (m Model) listRange(count int) (int, int) {
+	if m.height <= 0 {
+		return 0, count
+	}
+	const chromeHeight = 7
+	visible := m.height - chromeHeight
+	if visible < 1 {
+		visible = 1
+	}
+	if count <= visible {
+		return 0, count
+	}
+	start := m.cursor - visible/2
+	if start < 0 {
+		start = 0
+	}
+	if end := start + visible; end > count {
+		start = count - visible
+	}
+	return start, start + visible
 }
 
 // selected returns the highlighted mail message, or nil when not in mail mode or
@@ -332,16 +417,16 @@ func (m Model) View() string {
 		return ""
 	}
 	if m.err != nil {
-		return fmt.Sprintf("Error: %v\n\nPress q to quit.\n", m.err)
+		return m.stateView(fmt.Sprintf("Error: %v", m.err), "r retry · ? help · q quit")
 	}
 	if m.loading {
 		if m.mode == calendarMode {
-			return "Loading calendar…\n"
+			return m.stateView("Loading calendar…", "? help · q quit")
 		}
 		if m.all {
-			return "Loading all mail…\n"
+			return m.stateView("Loading all mail…", "? help · q quit")
 		}
-		return "Loading inbox…\n"
+		return m.stateView("Loading inbox…", "? help · q quit")
 	}
 	if m.viewing {
 		return m.detailView()
@@ -361,7 +446,9 @@ func (m Model) viewMail() string {
 	if len(m.messages) == 0 {
 		b.WriteString("  (no messages)\n")
 	}
-	for i, msg := range m.messages {
+	start, end := m.listRange(len(m.messages))
+	for i := start; i < end; i++ {
+		msg := m.messages[i]
 		cursor := "  "
 		if i == m.cursor {
 			cursor = "> "
@@ -399,7 +486,9 @@ func (m Model) viewCalendar() string {
 	if len(m.events) == 0 {
 		b.WriteString("  (no upcoming events)\n")
 	}
-	for i, e := range m.events {
+	start, end := m.listRange(len(m.events))
+	for i := start; i < end; i++ {
+		e := m.events[i]
 		cursor := "  "
 		if i == m.cursor {
 			cursor = "> "
@@ -444,7 +533,7 @@ func sameDay(a, b time.Time) bool {
 	return ay == by && am == bm && ad == bd
 }
 
-// footer renders the shared status line and key hints for both views.
+// footer renders mode-specific status and key hints.
 func (m Model) footer() string {
 	var b strings.Builder
 	b.WriteString("\n")
@@ -453,10 +542,27 @@ func (m Model) footer() string {
 		b.WriteString("\n")
 	}
 	if m.showHelp {
-		b.WriteString(helpStyle.Render("j/k move · enter open · a archive · r toggle read · R refresh · g/G top/bottom · tab mail/calendar · ? help · q quit"))
+		if m.mode == calendarMode {
+			b.WriteString(helpStyle.Render("j/k or ↑/↓ move · g/G or home/end top/bottom · tab mail/calendar · R refresh · ? help · q quit"))
+		} else {
+			b.WriteString(helpStyle.Render("j/k or ↑/↓ move · g/G or home/end top/bottom · enter open · a archive · r toggle read · R refresh · tab mail/calendar · ? help · q quit"))
+		}
 	} else {
-		b.WriteString(helpStyle.Render("enter open · tab switch · ? help · q quit"))
+		if m.mode == calendarMode {
+			b.WriteString(helpStyle.Render("tab switch · ? help · q quit"))
+		} else {
+			b.WriteString(helpStyle.Render("enter open · tab switch · ? help · q quit"))
+		}
 	}
+	b.WriteString("\n")
+	return b.String()
+}
+
+func (m Model) stateView(message, hint string) string {
+	var b strings.Builder
+	b.WriteString(message)
+	b.WriteString("\n\n")
+	b.WriteString(helpStyle.Render(hint))
 	b.WriteString("\n")
 	return b.String()
 }
@@ -465,38 +571,88 @@ func (m Model) footer() string {
 func (m Model) detailView() string {
 	sel := m.selected()
 	if sel == nil {
-		return "No message.\n\nPress esc to go back.\n"
+		return "No message.\n\nesc/enter/q back · ctrl+c quit\n"
 	}
 
+	lines := m.detailLines(sel)
+	start, end := m.detailRange(len(lines))
 	var b strings.Builder
+	for _, line := range lines[start:end] {
+		b.WriteString(line)
+		b.WriteString("\n")
+	}
+	b.WriteString("\n")
+	if m.showHelp {
+		b.WriteString(helpStyle.Render("j/k or ↑/↓ scroll · g/G or home/end top/bottom · esc/enter/q/backspace back · ctrl+c quit · ? help"))
+	} else {
+		b.WriteString(helpStyle.Render("j/k scroll · esc back · ? help"))
+	}
+	b.WriteString("\n")
+	return b.String()
+}
+
+func (m Model) detailLines(sel *mail.Message) []string {
 	width := m.width
 	if width <= 0 {
 		width = 80
 	}
-	b.WriteString(titleStyle.Render(lipgloss.NewStyle().Width(width).Render(sel.Subject)))
-	b.WriteString("\n\n")
+	lines := []string{titleStyle.Render(lipgloss.NewStyle().Width(width).Render(sel.Subject)), ""}
 	if !sel.Received.IsZero() {
-		b.WriteString(helpStyle.Render("Received: " + sel.Received.Time.Local().Format("Jan 02 15:04")))
-		b.WriteString("\n")
+		lines = append(lines, helpStyle.Render("Received: "+sel.Received.Time.Local().Format("Jan 02 15:04")))
 	}
-	b.WriteString(helpStyle.Width(width).Render("From: " + formatAddr(sel.From)))
-	b.WriteString("\n")
-	b.WriteString(helpStyle.Width(width).Render("To: " + formatAddrs(sel.To)))
-	b.WriteString("\n")
-	b.WriteString("\n")
+	lines = append(lines,
+		helpStyle.Width(width).Render("From: "+formatAddr(sel.From)),
+		helpStyle.Width(width).Render("To: "+formatAddrs(sel.To)),
+		"",
+	)
 	switch {
 	case m.bodyLoading:
-		b.WriteString("Loading message…\n")
+		return append(lines, "Loading message…")
 	case m.body == "":
-		b.WriteString("(empty message)\n")
+		return append(lines, "(empty message)")
 	default:
-		b.WriteString(lipgloss.NewStyle().Width(width).Render(m.body))
-		b.WriteString("\n")
+		return append(lines, strings.Split(lipgloss.NewStyle().Width(width).Render(m.body), "\n")...)
 	}
-	b.WriteString("\n")
-	b.WriteString(helpStyle.Render("esc/enter back · ctrl+c quit"))
-	b.WriteString("\n")
-	return b.String()
+}
+
+func (m Model) detailRange(count int) (int, int) {
+	if m.height <= 0 {
+		return 0, count
+	}
+	visible := m.detailViewportHeight()
+	start := m.detailScroll
+	if start > count-visible {
+		start = count - visible
+	}
+	if start < 0 {
+		start = 0
+	}
+	end := start + visible
+	if end > count {
+		end = count
+	}
+	return start, end
+}
+
+func (m Model) detailViewportHeight() int {
+	const footerHeight = 3
+	visible := m.height - footerHeight
+	if visible < 1 {
+		return 1
+	}
+	return visible
+}
+
+func (m Model) detailMaxScroll() int {
+	sel := m.selected()
+	if sel == nil || m.height <= 0 {
+		return 0
+	}
+	max := len(m.detailLines(sel)) - m.detailViewportHeight()
+	if max < 0 {
+		return 0
+	}
+	return max
 }
 
 func formatAddr(a mail.Address) string {

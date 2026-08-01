@@ -386,6 +386,75 @@ func TestDetailViewKeysClose(t *testing.T) {
 	}
 }
 
+func TestDetailViewVimNavigationAndArrowCompatibility(t *testing.T) {
+	m := New(&fakeProvider{}, 10, false)
+	m, _ = m.update(messagesLoadedMsg{sampleMessages()})
+	m, _ = m.update(tea.WindowSizeMsg{Width: 80, Height: 8})
+	m, _ = m.update(key("enter"))
+	m, _ = m.update(bodyLoadedMsg{id: "1", body: strings.Repeat("line\n", 20)})
+
+	tests := []struct {
+		name string
+		key  tea.KeyMsg
+		want int
+	}{
+		{"vim down", key("j"), 1},
+		{"arrow down", tea.KeyMsg{Type: tea.KeyDown}, 2},
+		{"vim up", key("k"), 1},
+		{"arrow up", tea.KeyMsg{Type: tea.KeyUp}, 0},
+		{"end", key("G"), m.detailMaxScroll()},
+		{"home", key("g"), 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var cmd tea.Cmd
+			m, cmd = m.update(tt.key)
+			if cmd != nil {
+				t.Errorf("unexpected command for %s", tt.name)
+			}
+			if m.detailScroll != tt.want {
+				t.Errorf("detailScroll = %d, want %d", m.detailScroll, tt.want)
+			}
+		})
+	}
+}
+
+func TestDetailViewHelpAndDismissalControls(t *testing.T) {
+	m := New(&fakeProvider{}, 10, false)
+	m, _ = m.update(messagesLoadedMsg{sampleMessages()})
+	m, _ = m.update(key("enter"))
+
+	m, _ = m.update(key("?"))
+	if !m.showHelp || !strings.Contains(m.View(), "↑/↓ scroll") {
+		t.Errorf("detail help should describe Vim and arrow navigation; got:\n%s", m.View())
+	}
+	m, _ = m.update(key("q"))
+	if m.viewing {
+		t.Error("q should dismiss the detail view")
+	}
+	if m.quitting {
+		t.Error("q should not quit while dismissing a detail view")
+	}
+}
+
+func TestLoadingAndErrorKeys(t *testing.T) {
+	m := New(&fakeProvider{}, 10, false)
+	m, cmd := m.update(key("q"))
+	if !m.quitting || cmd == nil {
+		t.Error("q should quit from the loading state")
+	}
+
+	m = New(&fakeProvider{}, 10, false)
+	m, _ = m.update(errMsg{errors.New("boom")})
+	m, cmd = m.update(key("r"))
+	if m.err != nil || !m.loading {
+		t.Error("r should clear an error and retry loading")
+	}
+	if cmd == nil {
+		t.Error("r should return a retry command")
+	}
+}
+
 func TestDetailViewBodyErrorSurfaces(t *testing.T) {
 	fp := &fakeProvider{bodyErr: errors.New("boom")}
 	m := New(fp, 10, false)

@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org).
 
 - Running `gh msft` without a subcommand now launches the interactive inbox and
   calendar TUI, matching `gh msft tui`.
+- The TUI now supports consistent Vim-style (`j`/`k`, `g`/`G`) and arrow-key
+  navigation across mail, calendar, and message details. Long message bodies use
+  a viewport, and loading/error/detail hints document context-specific help,
+  dismissal, and recovery controls.
 
 ## [0.3.0] - 2026-08-01
 
