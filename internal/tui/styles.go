@@ -13,6 +13,7 @@ type designSystem struct {
 	activeTab    lipgloss.Style
 	inactiveTab  lipgloss.Style
 	selected     lipgloss.Style
+	marked       lipgloss.Style
 	unread       lipgloss.Style
 	metadata     lipgloss.Style
 	status       lipgloss.Style
@@ -32,6 +33,7 @@ func newDesignSystem() designSystem {
 	border := lipgloss.AdaptiveColor{Light: "#D0D7DE", Dark: "#30363D"}
 	warning := lipgloss.AdaptiveColor{Light: "#9A6700", Dark: "#D29922"}
 	danger := lipgloss.AdaptiveColor{Light: "#CF222E", Dark: "#FF7B72"}
+	success := lipgloss.AdaptiveColor{Light: "#1A7F37", Dark: "#3FB950"}
 
 	return designSystem{
 		app:          lipgloss.NewStyle().Padding(0, 1),
@@ -42,6 +44,7 @@ func newDesignSystem() designSystem {
 		activeTab:    lipgloss.NewStyle().Bold(true).Foreground(accent).Underline(true),
 		inactiveTab:  lipgloss.NewStyle().Foreground(muted),
 		selected:     lipgloss.NewStyle().Bold(true).Foreground(accent),
+		marked:       lipgloss.NewStyle().Bold(true).Foreground(success),
 		unread:       lipgloss.NewStyle().Bold(true).Foreground(warning),
 		metadata:     lipgloss.NewStyle().Foreground(muted).Faint(true),
 		status:       lipgloss.NewStyle().Bold(true).Foreground(accent),

@@ -61,6 +61,7 @@ type Model struct {
 	calLoaded  bool
 
 	cursor   int
+	marks    selection
 	loading  bool
 	err      error
 	status   string
@@ -189,6 +190,7 @@ func (m Model) update(msg tea.Msg) (Model, tea.Cmd) {
 		m.mailLoaded = true
 		m.loading = false
 		m.err = nil
+		m.pruneMarks()
 		m.clampCursor()
 		return m, nil
 
@@ -271,10 +273,12 @@ func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 		return m, nil
 	case "esc":
 		m.showHelp = false
+		m.marks.clear()
 		return m, nil
 	case "tab":
 		m.toggleMode()
 		m.cursor = 0
+		m.marks.clear()
 		if cmd := m.loadForModeCmd(); cmd != nil {
 			m.loading = true
 			return m, cmd
@@ -311,6 +315,12 @@ func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 	case "k", "up":
 		m.moveCursor(-1)
 		return m, nil
+	case "shift+down", "J":
+		m.extendMarks(1)
+		return m, nil
+	case "shift+up", "K":
+		m.extendMarks(-1)
+		return m, nil
 	case "g", "home":
 		m.cursor = 0
 		return m, nil
@@ -319,7 +329,12 @@ func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 		m.clampCursor()
 		return m, nil
 	case "r":
-		// Local read toggle (visual only; provider has no mark-read yet).
+		// Local read state only; WorkIQ exposes no PATCH, and Graph needs one to
+		// persist isRead.
+		if m.marks.len() > 0 {
+			m.markSelectionRead()
+			return m, nil
+		}
 		if sel := m.selected(); sel != nil {
 			m.messages[m.cursor].IsRead = !sel.IsRead
 		}
@@ -335,6 +350,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 		m.loading = true
 		m.err = nil
 		m.status = "refreshing…"
+		m.marks.clear()
 		if m.mode == calendarMode {
 			return m, m.loadEventsCmd()
 		}
@@ -417,6 +433,46 @@ func (m *Model) moveCursor(delta int) {
 	m.clampCursor()
 }
 
+// extendMarks marks the message under the cursor and then moves by delta. Shift
+// therefore behaves as a momentary modifier rather than a sticky mode: a plain
+// arrow passes over a message without marking it, while leaving earlier marks
+// intact. At a list boundary the message is still marked and the cursor stays
+// put, so holding shift-arrow against the end of the list is harmless.
+func (m *Model) extendMarks(delta int) {
+	sel := m.selected()
+	if sel == nil {
+		return
+	}
+	m.marks.add(sel.ID)
+	m.moveCursor(delta)
+}
+
+// markSelectionRead sets, rather than toggles, the read state of every marked
+// message so a mixed selection ends up uniformly read.
+func (m *Model) markSelectionRead() {
+	count := 0
+	for i := range m.messages {
+		if m.marks.has(m.messages[i].ID) {
+			m.messages[i].IsRead = true
+			count++
+		}
+	}
+	m.marks.clear()
+	m.status = fmt.Sprintf("marked %d as read", count)
+}
+
+// pruneMarks drops marks for messages that are no longer in the list.
+func (m *Model) pruneMarks() {
+	if m.marks.len() == 0 {
+		return
+	}
+	ids := make([]string, 0, len(m.messages))
+	for _, message := range m.messages {
+		ids = append(ids, message.ID)
+	}
+	m.marks.retain(ids)
+}
+
 func (m *Model) toggleMode() {
 	if m.mode == mailMode {
 		m.mode = calendarMode
@@ -483,6 +539,7 @@ func (m *Model) removeByID(id string) {
 			break
 		}
 	}
+	m.pruneMarks()
 	m.clampCursor()
 }
 
@@ -524,6 +581,8 @@ func (m Model) viewMail() string {
 		switch {
 		case i == m.cursor:
 			line = styles.selected.Render(line)
+		case m.marks.has(msg.ID):
+			line = styles.marked.Render(line)
 		case !msg.IsRead:
 			line = styles.unread.Render(line)
 		}
@@ -586,7 +645,11 @@ func (m Model) mailTitle() string {
 	if m.all {
 		scope = "All mail"
 	}
-	return fmt.Sprintf("Inbox · %d %s · %s", len(m.messages), pluralize(len(m.messages), "message"), scope)
+	title := fmt.Sprintf("Inbox · %d %s · %s", len(m.messages), pluralize(len(m.messages), "message"), scope)
+	if count := m.marks.len(); count > 0 {
+		title += fmt.Sprintf(" · %d selected", count)
+	}
+	return title
 }
 
 func (m Model) calendarTitle() string {
@@ -600,11 +663,28 @@ func pluralize(count int, singular string) string {
 	return singular
 }
 
+// markGlyph flags a row that is part of the current selection. markWidth is the
+// column budget the glyph and its trailing space occupy.
+const (
+	markGlyph = "✓"
+	markWidth = 2
+)
+
+// markColumn renders the selection gutter, always markWidth columns wide so
+// marking a row never reflows the list.
+func markColumn(marked bool) string {
+	if marked {
+		return markGlyph + " "
+	}
+	return strings.Repeat(" ", markWidth)
+}
+
 func (m Model) mailRow(index int, msg mail.Message) string {
 	cursor := "  "
 	if index == m.cursor {
 		cursor = "> "
 	}
+	mark := markColumn(m.marks.has(msg.ID))
 	state := "    "
 	if !msg.IsRead {
 		state = "NEW "
@@ -615,18 +695,20 @@ func (m Model) mailRow(index int, msg mail.Message) string {
 	}
 	width := m.listWidth()
 	if m.isNarrow() {
-		senderWidth := maxInt(4, width-len(cursor)-len(state)-6)
-		firstLine := fmt.Sprintf("%s%s%s %s",
+		senderWidth := maxInt(4, width-len(cursor)-markWidth-len(state)-6)
+		firstLine := fmt.Sprintf("%s%s%s%s %s",
 			cursor,
+			mark,
 			state,
 			truncate(from, senderWidth),
 			receivedTime(msg),
 		)
-		secondLine := "    " + truncate(msg.Subject, maxInt(4, width-4))
+		indent := len(cursor) + markWidth
+		secondLine := strings.Repeat(" ", indent) + truncate(msg.Subject, maxInt(4, width-indent))
 		return truncate(firstLine, width) + "\n" + truncate(secondLine, width)
 	}
 	senderWidth := minInt(22, maxInt(12, width/4))
-	return truncate(cursor+state+" "+padRight(truncate(from, senderWidth), senderWidth)+" "+
+	return truncate(cursor+mark+state+" "+padRight(truncate(from, senderWidth), senderWidth)+" "+
 		truncate(msg.Subject, m.subjectWidth())+" "+receivedDateTime(msg), width)
 }
 
@@ -759,14 +841,14 @@ func (m Model) compactHelp() string {
 	if m.mode == calendarMode {
 		return "j/k move · enter open · tab switch · ? help · q quit"
 	}
-	return "j/k move · enter open · tab switch · ? help · q quit"
+	return "j/k move · shift+↑/↓ select · enter open · tab switch · ? help · q quit"
 }
 
 func (m Model) expandedHelp() string {
 	if m.mode == calendarMode {
 		return "j/k or ↑/↓ move · g/G or home/end top/bottom · enter open · R refresh · tab mail · ?/esc close help · q quit"
 	}
-	return "j/k or ↑/↓ move · g/G or home/end top/bottom · enter open · a archive · r toggle read · R refresh · tab calendar · ?/esc close help · q quit"
+	return "j/k or ↑/↓ move · shift+↑/↓ or J/K select · g/G or home/end top/bottom · enter open · a archive · r mark read · esc clear selection · R refresh · tab calendar · ?/esc close help · q quit"
 }
 
 // detailView renders the active mail or calendar detail.
@@ -1004,7 +1086,7 @@ func formatAddrs(as []mail.Address) string {
 // inbox row after reserving state, sender, and received-time columns.
 func (m Model) subjectWidth() int {
 	senderWidth := minInt(22, maxInt(12, m.listWidth()/4))
-	return maxInt(8, m.listWidth()-senderWidth-21)
+	return maxInt(8, m.listWidth()-senderWidth-21-markWidth)
 }
 
 func padRight(s string, width int) string {
