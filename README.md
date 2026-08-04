@@ -164,14 +164,33 @@ message details remain easy to scan. Lists stay within the terminal height, and
 | Key                    | Action                                      |
 | ---------------------- | ------------------------------------------- |
 | `j` / `k` or `↑` / `↓` | move down / up in mail and calendar lists   |
+| `shift+↑` / `shift+↓` (or `K` / `J`) | select the current message and move (mail only) |
 | `g` / `G` or home/end  | jump to top / bottom of a list or message   |
 | `tab`                  | switch mail / calendar                      |
 | `a`                    | archive selected message (mail only)        |
 | `enter`                | open selected mail or calendar event; close detail |
 | `esc` / `?`            | dismiss / toggle expanded help               |
-| `r`                    | toggle read state (visual only; mail only)  |
+| `r`                    | mark the selection read, or toggle the current row (visual only; mail only) |
 | `R`                    | refresh current view or retry after an error |
 | `q`                    | quit, or close an open message               |
+
+#### Selecting several messages
+
+`shift+↑` and `shift+↓` select the message the cursor is on and then move, so
+holding shift and pressing an arrow repeatedly builds up a run of messages.
+Shift is momentary rather than a mode: a plain `↑` or `↓` moves without
+selecting, which passes over a message and leaves it out while keeping
+everything selected so far. `r` then marks every selected message as read and
+clears the selection; with nothing selected it still toggles the current row.
+`esc`, `tab`, and `R` also clear the selection, and archiving a selected message
+drops it from the selection.
+
+Selected rows carry a `✓` marker and the header shows how many are selected.
+Terminals that do not send modified arrow keys can use `J` and `K`, which are
+bound to the same actions.
+
+Marking as read is local to the running TUI: the WorkIQ broker exposes no
+mark-as-read action, so the change is not written back to Microsoft 365.
 
 Open messages use `j` / `k`, arrow keys, `g`, and `G` to scroll their full
 contents. Open calendar events show their description, participants, location,

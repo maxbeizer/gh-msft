@@ -739,9 +739,9 @@ func TestSubjectWidthTracksResize(t *testing.T) {
 		width int
 		want  int
 	}{
-		{"unset falls back", 0, 35},
+		{"unset falls back", 0, 31},
 		{"narrow clamps to min", 20, 8},
-		{"wide grows", 120, 71},
+		{"wide grows", 120, 67},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
