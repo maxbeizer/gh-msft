@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org).
 
 ## [Unreleased]
 
+### Added
+
+- `shift+↑` / `shift+↓` (and `J` / `K`) select messages in the interactive inbox.
+  Shift is a momentary modifier: it selects the current message and moves, while a
+  plain arrow moves without selecting so a message can be passed over. `r` marks
+  every selected message as read and clears the selection, and `esc`, `tab`, and
+  `R` clear it without acting. Selected rows show a `✓` and the header shows the
+  count. As with the existing `r` binding, the read state is local to the running
+  TUI.
+
+### Fixed
+
+- Inbox and calendar rows no longer wrap onto a second line when they fill the
+  panel. Rows were sized to the panel's outer width, but Lip Gloss counts the
+  panel's padding inside that width, so a full-width row lost its trailing column.
+
 ### Changed
 
 - Refreshed the README with a quick-start path, a recorded synthetic TUI demo that

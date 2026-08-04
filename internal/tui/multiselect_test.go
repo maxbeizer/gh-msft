@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/maxbeizer/gh-msft/internal/mail"
 	"github.com/maxbeizer/gh-msft/internal/mstime"
 )
@@ -356,5 +357,69 @@ func TestHelpMentionsSelection(t *testing.T) {
 	}
 	if !strings.Contains(m.compactHelp(), "select") {
 		t.Errorf("compact help should document selection, got %q", m.compactHelp())
+	}
+}
+
+// Rows must never exceed the list width, or the terminal wraps them and the
+// list loses its alignment.
+func TestMailRowsFitTheContentWidth(t *testing.T) {
+	for _, width := range []int{40, 54, 60, 80, 100, 120, 200} {
+		t.Run(fmt.Sprintf("width %d", width), func(t *testing.T) {
+			m := loadedInbox(t, 3)
+			m.messages[1].Subject = strings.Repeat("long subject ", 20)
+			m.messages[1].From = mail.Address{Name: strings.Repeat("Verbose Sender ", 5)}
+			m, _ = m.update(tea.WindowSizeMsg{Width: width, Height: 24})
+			m, _ = m.update(shiftDown)
+
+			for i, msg := range m.messages {
+				for _, line := range strings.Split(m.mailRow(i, msg), "\n") {
+					if got := lipgloss.Width(line); got > m.contentWidth() {
+						t.Errorf("row %d line width = %d, want <= %d: %q", i, got, m.contentWidth(), line)
+					}
+				}
+			}
+		})
+	}
+}
+
+// A row that is wider than the panel's inner content area gets wrapped by
+// Lip Gloss, splitting the received time onto its own line and destroying the
+// list's alignment. styles.panel is sized with Width(listWidth()) and counts its
+// own horizontal padding inside that budget, so rows must be narrower still.
+func TestMailRowsAreNotWrappedByThePanel(t *testing.T) {
+	for _, width := range []int{60, 80, 100, 140} {
+		t.Run(fmt.Sprintf("width %d", width), func(t *testing.T) {
+			messages := inboxOf(4)
+			for i := range messages {
+				messages[i].Subject = strings.Repeat("a very long subject ", 10)
+			}
+			m := New(&fakeProvider{}, 10, false)
+			m, _ = m.update(messagesLoadedMsg{messages})
+			m, _ = m.update(tea.WindowSizeMsg{Width: width, Height: 30})
+
+			lines := strings.Split(m.View(), "\n")
+			for _, line := range lines {
+				if lipgloss.Width(line) > width {
+					t.Errorf("rendered line is %d wide, terminal is %d: %q", lipgloss.Width(line), width, line)
+				}
+			}
+
+			for _, msg := range messages {
+				sender := msg.From.Name
+				found := false
+				for _, line := range lines {
+					if !strings.Contains(line, sender) {
+						continue
+					}
+					found = true
+					if !strings.Contains(line, receivedDateTime(msg)) {
+						t.Errorf("row for %q was wrapped; received time is missing from %q", sender, line)
+					}
+				}
+				if !found {
+					t.Errorf("no row rendered for %q", sender)
+				}
+			}
+		})
 	}
 }

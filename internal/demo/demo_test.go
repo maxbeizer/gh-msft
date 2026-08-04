@@ -46,3 +46,24 @@ func TestCalendarProviderFixtures(t *testing.T) {
 		t.Error("GetDetail() returned an incomplete fixture")
 	}
 }
+
+// The multi-select recording needs a run of unread messages at the top of the
+// inbox: enough to mark some, skip one, and mark more, with the skipped message
+// visibly staying unread afterwards.
+func TestMailFixturesSupportMultiSelectDemo(t *testing.T) {
+	messages, err := (MailProvider{}).ListInbox(context.Background(), 0, false)
+	if err != nil {
+		t.Fatalf("ListInbox() error = %v", err)
+	}
+	const wantRun = 5
+	run := 0
+	for _, message := range messages {
+		if message.IsRead {
+			break
+		}
+		run++
+	}
+	if run < wantRun {
+		t.Errorf("leading unread run = %d, want at least %d", run, wantRun)
+	}
+}

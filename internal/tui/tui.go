@@ -693,7 +693,7 @@ func (m Model) mailRow(index int, msg mail.Message) string {
 	if from == "" {
 		from = msg.From.Email
 	}
-	width := m.listWidth()
+	width := m.contentWidth()
 	if m.isNarrow() {
 		senderWidth := maxInt(4, width-len(cursor)-markWidth-len(state)-6)
 		firstLine := fmt.Sprintf("%s%s%s%s %s",
@@ -717,7 +717,7 @@ func (m Model) calendarRow(index int, e calendar.Event) string {
 	if index == m.cursor {
 		cursor = "> "
 	}
-	width := m.listWidth()
+	width := m.contentWidth()
 	if m.isNarrow() {
 		timeWidth := minInt(7, maxInt(4, width/2))
 		subjectWidth := maxInt(4, width-len(cursor)-timeWidth-1)
@@ -832,7 +832,7 @@ func (m Model) footer() string {
 	} else {
 		phrases = strings.Split(m.compactHelp(), " · ")
 	}
-	b.WriteString(styles.help.Render("Help: " + wrapPhrases(phrases, m.listWidth()-6)))
+	b.WriteString(styles.help.Render("Help: " + wrapPhrases(phrases, m.contentWidth()-4)))
 	b.WriteString("\n")
 	return b.String()
 }
@@ -884,7 +884,7 @@ func (m Model) detailLines() []string {
 		return []string{"No message."}
 	}
 
-	width := m.listWidth()
+	width := m.contentWidth()
 	lines := []string{styles.header.Render(truncate(sel.Subject, width)), ""}
 	if !sel.Received.IsZero() {
 		lines = append(lines, styles.metadata.Render("Received: "+sel.Received.Time.Local().Format("Jan 02 15:04")))
@@ -929,7 +929,7 @@ func (m Model) eventDetailLines() []string {
 		return []string{styles.loading.Render("Loading event…")}
 	}
 	detail := m.eventDetail
-	width := m.listWidth()
+	width := m.contentWidth()
 	subject := detail.Subject
 	if subject == "" {
 		subject = "(untitled event)"
@@ -1025,7 +1025,7 @@ func (m Model) footerExtraLines() int {
 	} else {
 		phrases = strings.Split(m.compactHelp(), " · ")
 	}
-	return extraLines + strings.Count(wrapPhrases(phrases, m.listWidth()-6), "\n")
+	return extraLines + strings.Count(wrapPhrases(phrases, m.contentWidth()-4), "\n")
 }
 
 func (m Model) listRange(total, focus int) (int, int) {
@@ -1085,8 +1085,8 @@ func formatAddrs(as []mail.Address) string {
 // subjectWidth returns how many columns the subject may use in a standard-width
 // inbox row after reserving state, sender, and received-time columns.
 func (m Model) subjectWidth() int {
-	senderWidth := minInt(22, maxInt(12, m.listWidth()/4))
-	return maxInt(8, m.listWidth()-senderWidth-21-markWidth)
+	senderWidth := minInt(22, maxInt(12, m.contentWidth()/4))
+	return maxInt(8, m.contentWidth()-senderWidth-21-markWidth)
 }
 
 func padRight(s string, width int) string {
@@ -1126,7 +1126,7 @@ func (m Model) loadingView() string {
 }
 
 func (m Model) errorView() string {
-	width := m.listWidth()
+	width := m.contentWidth()
 	content := styles.error.Render("Error") + "\n" +
 		lipgloss.NewStyle().Width(width).Render(m.err.Error()) + "\n\n" +
 		styles.help.Render("Help: R retry · q quit")
@@ -1194,6 +1194,19 @@ func (m Model) listWidth() int {
 		return 12
 	}
 	return width
+}
+
+// contentWidth is the usable width for anything drawn inside the list panel.
+// The panel is sized with Width(listWidth()) and Lip Gloss counts a style's
+// horizontal padding inside that budget, so content that is listWidth() wide is
+// wrapped by the panel: an inbox row loses its received time to a second line
+// and the column alignment collapses. The compact panel has no padding, so
+// there the two widths coincide.
+func (m Model) contentWidth() int {
+	if m.isNarrow() {
+		return m.listWidth()
+	}
+	return maxInt(1, m.listWidth()-2)
 }
 
 func wrapPhrases(phrases []string, width int) string {

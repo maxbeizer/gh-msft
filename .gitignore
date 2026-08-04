@@ -35,3 +35,8 @@ go.work.sum
 # Editor/IDE
 # .idea/
 # .vscode/
+
+# Local recording artifacts for the multi-select demo (see PR description)
+/docs/multiselect.gif
+/docs/multiselect.tape
+/docs/multiselect.exp
