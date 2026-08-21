@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org).
 
 ## [Unreleased]
 
+### Fixed
+
+- Prevented interactive progress spinners from printing every animation frame when
+  their message exceeds the terminal width.
+
 ### Changed
 
 - Refreshed the README with a quick-start path, a recorded synthetic TUI demo that

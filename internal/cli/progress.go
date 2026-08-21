@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/mattn/go-isatty"
+	"github.com/mattn/go-runewidth"
+	"golang.org/x/term"
 )
 
 // spinner writes an animated, single-line progress indicator to a writer while a
@@ -17,6 +19,7 @@ import (
 type spinner struct {
 	w       io.Writer
 	enabled bool
+	width   func() int
 
 	mu       sync.Mutex
 	messages []string
@@ -27,7 +30,10 @@ type spinner struct {
 
 var spinnerFrames = []rune{'⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'}
 
-const framesPerMessage = 20
+const (
+	framesPerMessage   = 20
+	spinnerSafetyWidth = 1
+)
 
 // newSpinner returns a spinner writing to w. It is enabled only when w is (or
 // wraps) an interactive terminal, which we detect via os.Stderr.
@@ -36,7 +42,12 @@ func newSpinner(w io.Writer, messages ...string) *spinner {
 }
 
 func newSpinnerWithTerminal(w io.Writer, enabled bool, messages ...string) *spinner {
-	return &spinner{w: w, enabled: enabled, messages: messages}
+	return &spinner{
+		w:        w,
+		enabled:  enabled,
+		width:    func() int { return terminalWidth(w) },
+		messages: messages,
+	}
 }
 
 func isTerminal(w io.Writer) bool {
@@ -46,6 +57,18 @@ func isTerminal(w io.Writer) bool {
 	}
 	fd := f.Fd()
 	return isatty.IsTerminal(fd) || isatty.IsCygwinTerminal(fd)
+}
+
+func terminalWidth(w io.Writer) int {
+	f, ok := w.(*os.File)
+	if !ok {
+		return 0
+	}
+	width, _, err := term.GetSize(int(f.Fd()))
+	if err != nil {
+		return 0
+	}
+	return width
 }
 
 // start begins animating. It is safe to call when disabled (no-op).
@@ -72,10 +95,41 @@ func (s *spinner) run() {
 		case <-ticker.C:
 			msg := s.messageAt(frame)
 			elapsed := time.Since(start).Truncate(time.Second)
-			fmt.Fprintf(s.w, "\r\033[K%c %s (%s)", spinnerFrames[frame%len(spinnerFrames)], msg, elapsed)
+			fmt.Fprintf(s.w, "\r\033[K%s", s.renderFrame(frame, msg, elapsed))
 			frame++
 		}
 	}
+}
+
+func (s *spinner) renderFrame(frame int, message string, elapsed time.Duration) string {
+	width := 0
+	if s.width != nil {
+		width = s.width()
+	}
+	return formatSpinnerFrame(spinnerFrames[frame%len(spinnerFrames)], message, elapsed, width)
+}
+
+func formatSpinnerFrame(frame rune, message string, elapsed time.Duration, terminalWidth int) string {
+	prefix := fmt.Sprintf("%c ", frame)
+	suffix := fmt.Sprintf(" (%s)", elapsed)
+	line := prefix + message + suffix
+	if terminalWidth <= 0 {
+		return line
+	}
+
+	maxWidth := terminalWidth - spinnerSafetyWidth
+	if maxWidth <= 0 {
+		return ""
+	}
+	if runewidth.StringWidth(line) <= maxWidth {
+		return line
+	}
+
+	messageWidth := maxWidth - runewidth.StringWidth(prefix) - runewidth.StringWidth(suffix)
+	if messageWidth <= 0 {
+		return runewidth.Truncate(string(frame), maxWidth, "")
+	}
+	return prefix + runewidth.Truncate(message, messageWidth, "…") + suffix
 }
 
 // setMessages updates the messages shown next to the spinner. The spinner cycles
