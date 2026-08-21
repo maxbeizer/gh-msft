@@ -89,6 +89,11 @@ func TestFormatSpinnerFrame(t *testing.T) {
 			wantTruncated: true,
 		},
 		{
+			name:          "ellipsis wider than remaining space",
+			message:       "Starting WorkIQ",
+			terminalWidth: 9,
+		},
+		{
 			name:          "unknown width",
 			message:       "Starting WorkIQ",
 			terminalWidth: 0,

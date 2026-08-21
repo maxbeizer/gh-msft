@@ -137,7 +137,11 @@ func formatSpinnerFrame(frame rune, message string, elapsed time.Duration, termi
 	if messageWidth <= 0 {
 		return runewidth.Truncate(string(frame), maxWidth, "")
 	}
-	return prefix + runewidth.Truncate(message, messageWidth, "…") + suffix
+	tail := "…"
+	if runewidth.StringWidth(tail) > messageWidth {
+		tail = ""
+	}
+	return prefix + runewidth.Truncate(message, messageWidth, tail) + suffix
 }
 
 // setMessages updates the messages shown next to the spinner. The spinner cycles
