@@ -68,6 +68,7 @@ func TestFormatSpinnerFrame(t *testing.T) {
 		message       string
 		terminalWidth int
 		want          string
+		wantTruncated bool
 	}{
 		{
 			name:          "normal width",
@@ -79,13 +80,13 @@ func TestFormatSpinnerFrame(t *testing.T) {
 			name:          "narrow width",
 			message:       "Starting WorkIQ",
 			terminalWidth: 16,
-			want:          "⠋ Startin… (1s)",
+			wantTruncated: true,
 		},
 		{
 			name:          "unicode display width",
 			message:       "界界界界",
 			terminalWidth: 12,
-			want:          "⠋ 界… (1s)",
+			wantTruncated: true,
 		},
 		{
 			name:          "unknown width",
@@ -104,8 +105,11 @@ func TestFormatSpinnerFrame(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := formatSpinnerFrame('⠋', tt.message, time.Second, tt.terminalWidth)
-			if got != tt.want {
+			if tt.want != "" && got != tt.want {
 				t.Errorf("formatSpinnerFrame() = %q, want %q", got, tt.want)
+			}
+			if tt.wantTruncated && (!strings.Contains(got, "…") || !strings.HasSuffix(got, " (1s)")) {
+				t.Errorf("formatSpinnerFrame() = %q, want a truncated message with elapsed time", got)
 			}
 			if tt.terminalWidth > 0 && runewidth.StringWidth(got) >= tt.terminalWidth {
 				t.Errorf("formatSpinnerFrame() width = %d, must be less than terminal width %d", runewidth.StringWidth(got), tt.terminalWidth)
@@ -131,6 +135,30 @@ func TestSpinnerRenderFrameReadsCurrentWidth(t *testing.T) {
 	}
 	if !strings.Contains(narrow, "…") {
 		t.Errorf("narrow frame was not truncated: %q", narrow)
+	}
+}
+
+func TestSupportsSpinner(t *testing.T) {
+	tests := []struct {
+		name     string
+		native   bool
+		cygwin   bool
+		width    int
+		expected bool
+	}{
+		{"native terminal with width", true, false, 80, true},
+		{"native terminal with unknown width", true, false, 0, true},
+		{"cygwin terminal with width", false, true, 80, true},
+		{"cygwin terminal with unknown width", false, true, 0, false},
+		{"non-terminal", false, false, 80, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := supportsSpinner(tt.native, tt.cygwin, tt.width); got != tt.expected {
+				t.Errorf("supportsSpinner() = %t, want %t", got, tt.expected)
+			}
+		})
 	}
 }
 

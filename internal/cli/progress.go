@@ -36,9 +36,9 @@ const (
 )
 
 // newSpinner returns a spinner writing to w. It is enabled only when w is (or
-// wraps) an interactive terminal, which we detect via os.Stderr.
+// wraps) an interactive terminal whose width can be handled safely.
 func newSpinner(w io.Writer, messages ...string) *spinner {
-	return newSpinnerWithTerminal(w, isTerminal(w), messages...)
+	return newSpinnerWithTerminal(w, spinnerEnabled(w), messages...)
 }
 
 func newSpinnerWithTerminal(w io.Writer, enabled bool, messages ...string) *spinner {
@@ -50,13 +50,21 @@ func newSpinnerWithTerminal(w io.Writer, enabled bool, messages ...string) *spin
 	}
 }
 
-func isTerminal(w io.Writer) bool {
+func spinnerEnabled(w io.Writer) bool {
 	f, ok := w.(*os.File)
 	if !ok {
 		return false
 	}
 	fd := f.Fd()
-	return isatty.IsTerminal(fd) || isatty.IsCygwinTerminal(fd)
+	return supportsSpinner(
+		isatty.IsTerminal(fd),
+		isatty.IsCygwinTerminal(fd),
+		terminalWidth(w),
+	)
+}
+
+func supportsSpinner(nativeTerminal, cygwinTerminal bool, width int) bool {
+	return nativeTerminal || (cygwinTerminal && width > 0)
 }
 
 func terminalWidth(w io.Writer) int {
